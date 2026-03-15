@@ -63,6 +63,12 @@ function getEffectIcon(type: string): string {
     flash: '⚡',
     blur: '🌫️',
     slide: '➡️',
+    fadeIn: '🌅',
+    bounce: '🏀',
+    glitch: '📺',
+    flipX: '🪞',
+    pixelate: '🧩',
+    colorInvert: '🎨',
   }
   return icons[type] || '✨'
 }

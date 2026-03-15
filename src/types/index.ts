@@ -15,6 +15,12 @@ export type AnimationEffect =
   | 'flash'       // 闪白
   | 'blur'        // 模糊过渡
   | 'slide'       // 滑入滑出
+  | 'fadeIn'      // 淡入效果
+  | 'bounce'      // 弹跳缩放
+  | 'glitch'      // 故障效果（RGB 通道分离）
+  | 'flipX'       // 水平翻转
+  | 'pixelate'    // 像素化
+  | 'colorInvert' // 颜色反转
 
 /** 动画效果配置 */
 export interface EffectConfig {
