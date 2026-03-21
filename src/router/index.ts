@@ -23,6 +23,16 @@ const router = createRouter({
       name: 'splice',
       component: () => import('../views/RippleSplicePage.vue'),
     },
+    {
+      path: '/intro',
+      name: 'intro',
+      component: () => import('../views/IntroPage.vue'),
+    },
+    {
+      path: '/poster',
+      name: 'poster',
+      component: () => import('../views/PosterPage.vue'),
+    },
   ],
 })
 

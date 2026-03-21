@@ -64,6 +64,37 @@ export async function pickImageFiles(): Promise<File[]> {
 }
 
 /**
+ * 保存图片文件
+ * - Tauri: 打开系统保存对话框，写入文件
+ * - Web: 触发浏览器下载
+ */
+export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg'): Promise<void> {
+  const filename = `flika-poster.${ext === 'jpeg' ? 'jpg' : 'png'}`
+  if (isTauri()) {
+    const { save } = await import('@tauri-apps/plugin-dialog')
+    const { writeFile } = await import('@tauri-apps/plugin-fs')
+
+    const path = await save({
+      title: '保存图片',
+      defaultPath: filename,
+      filters: [{ name: '图片', extensions: [ext === 'jpeg' ? 'jpg' : 'png'] }],
+    })
+
+    if (!path) return
+
+    const buffer = await blob.arrayBuffer()
+    await writeFile(path, new Uint8Array(buffer))
+  } else {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+}
+
+/**
  * 保存视频文件
  * - Tauri: 打开系统保存对话框，写入文件
  * - Web: 触发浏览器下载

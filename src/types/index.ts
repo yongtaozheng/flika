@@ -99,3 +99,100 @@ export interface RippleConfig {
   /** 像素块大小（性能优化，值越大渲染越快但越粗糙） */
   step: number
 }
+
+/** 开场动画类型 */
+export type IntroAnimation =
+  | 'none'
+  | 'fadeIn'
+  | 'slideUp'
+  | 'slideDown'
+  | 'slideLeft'
+  | 'typewriter'
+  | 'zoomIn'
+  | 'glitch'
+  | 'textReveal'  // 文字镂空：视频/图片只在文字形状内可见，文字从小放大揭示画面
+
+/** 开场文字图层 */
+export interface IntroTextLayer {
+  text: string
+  fontSize: number        // px
+  fontWeight: string      // 'normal' | 'bold'
+  color: string
+  x: number               // 0-1 normalized (0.5=居中)
+  y: number               // 0-1 normalized
+  animation: IntroAnimation
+  delay: number           // seconds, when animation starts
+  animDuration: number    // seconds, how long animation takes
+}
+
+/** 开场图片图层 */
+export interface IntroImageLayer {
+  file: File | null
+  url: string
+  size: number            // 0-1 normalized canvas width
+  x: number
+  y: number
+  animation: IntroAnimation
+  delay: number
+  animDuration: number
+}
+
+/** 海报宽高比 */
+export type PosterRatio = '16:9' | '9:16' | '1:1' | '4:3'
+
+/** 海报文字图层 */
+export interface PosterTextLayer {
+  text: string
+  fontSize: number
+  fontWeight: string        // 'normal' | 'bold' | '100'-'900'
+  fontStyle: 'normal' | 'italic'
+  color: string
+  x: number                 // 0-1 normalized
+  y: number                 // 0-1 normalized
+  textAlign: 'left' | 'center' | 'right'
+  shadowColor: string
+  shadowBlur: number        // 0 = off
+  strokeColor: string
+  strokeWidth: number       // 0 = off
+}
+
+/** 海报图片图层 */
+export interface PosterImageLayer {
+  file: File | null
+  url: string
+  size: number              // fraction of canvas width
+  x: number
+  y: number
+  opacity: number           // 0-1
+  rounded: boolean          // circular clip
+}
+
+/** 海报/封面配置 */
+export interface PosterConfig {
+  ratio: PosterRatio
+  bgType: 'color' | 'image' | 'video'
+  bgFile: File | null
+  bgUrl: string
+  bgOverlayOpacity: number
+  bgColor: string
+  bgColorEnd: string
+  bgVideoTime: number       // which second to capture from video bg
+  title: PosterTextLayer
+  subtitle: PosterTextLayer
+  logo: PosterImageLayer
+}
+
+/** 开场配置 */
+export interface IntroConfig {
+  duration: number        // total intro duration in seconds (2-10)
+  bgType: 'color' | 'image' | 'video'
+  bgFile: File | null     // image or video file
+  bgUrl: string           // object URL for bgFile
+  bgOverlayOpacity: number // 0-1, dark overlay on image/video bg for legibility
+  bgColor: string
+  bgColorEnd: string      // gradient end (same as bgColor = solid)
+  title: IntroTextLayer
+  subtitle: IntroTextLayer
+  logo: IntroImageLayer
+  syncToBeats: boolean    // trigger title animation on first beat
+}

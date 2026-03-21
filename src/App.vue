@@ -6,6 +6,8 @@ const route = useRoute()
 const isFilmStrip = computed(() => route.path === '/filmstrip')
 const isMusicBall = computed(() => route.path === '/music-ball')
 const isSplice = computed(() => route.path === '/splice')
+const isIntro = computed(() => route.path === '/intro')
+const isPoster = computed(() => route.path === '/poster')
 </script>
 
 <template>
@@ -53,6 +55,21 @@ const isSplice = computed(() => route.path === '/splice')
             <circle cx="22" cy="22" r="5"/><circle cx="22" cy="22" r="13"/><circle cx="22" cy="22" r="21"/>
           </svg>
           涟漪拼接
+        </router-link>
+        <router-link to="/intro" class="nav-item" :class="{ active: isIntro }">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="6" width="20" height="12" rx="2"/>
+            <path d="M8 6V4M16 6V4M8 18v2M16 18v2"/>
+            <circle cx="12" cy="12" r="2.5" fill="currentColor" opacity="0.7"/>
+          </svg>
+          视频开场
+        </router-link>
+        <router-link to="/poster" class="nav-item" :class="{ active: isPoster }">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="M3 9h18M9 21V9"/>
+          </svg>
+          封面海报
         </router-link>
       </nav>
     </header>
