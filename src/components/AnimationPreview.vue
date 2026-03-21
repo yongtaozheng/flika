@@ -13,12 +13,11 @@ const props = defineProps<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
-// 响应式包装 - 使用 computed 确保跟踪 props 变化
 const imagesRef = computed(() => props.images)
 const beatsRef = computed(() => props.beats)
 const currentTimeRef = computed(() => props.currentTime)
 
-const { renderFrame, preloadImages, reset } = useAnimationEngine(
+const { renderFrame, preloadImages, reset, exportVideo } = useAnimationEngine(
   canvasRef,
   imagesRef as any,
   beatsRef as any,
@@ -27,89 +26,48 @@ const { renderFrame, preloadImages, reset } = useAnimationEngine(
 
 let animationId: number | null = null
 
-// 获取启用的效果类型列表
 const enabledEffects = computed<AnimationEffect[]>(() =>
   props.config.effects.filter((e) => e.enabled).map((e) => e.type)
 )
 
-// 监听图片变化，预加载
-watch(
-  () => props.images,
-  async () => {
-    await preloadImages()
-    renderOnce()
-  },
-  { deep: true }
-)
-
-// 监听播放状态
-watch(
-  () => props.isPlaying,
-  (playing) => {
-    if (playing) {
-      startRenderLoop()
-    } else {
-      stopRenderLoop()
-      renderOnce()
-    }
-  }
-)
-
-// 非播放时跟随 currentTime 渲染
-watch(
-  () => props.currentTime,
-  () => {
-    if (!props.isPlaying) {
-      renderOnce()
-    }
-  }
-)
-
-// 监听配置变化
-watch(
-  () => props.config,
-  () => {
-    if (!props.isPlaying) renderOnce()
-  },
-  { deep: true }
-)
+watch(() => props.images, async () => { await preloadImages(); renderOnce() }, { deep: true })
+watch(() => props.isPlaying, (playing) => {
+  if (playing) startRenderLoop()
+  else { stopRenderLoop(); renderOnce() }
+})
+watch(() => props.currentTime, () => { if (!props.isPlaying) renderOnce() })
+watch(() => props.config, () => { if (!props.isPlaying) renderOnce() }, { deep: true })
 
 function renderOnce() {
-  renderFrame(
-    enabledEffects.value,
-    props.config.effectDuration,
-    props.config.backgroundColor
-  )
+  renderFrame(enabledEffects.value, props.config.effectDuration, props.config.backgroundColor)
 }
 
 function startRenderLoop() {
   function loop() {
-    renderFrame(
-      enabledEffects.value,
-      props.config.effectDuration,
-      props.config.backgroundColor
-    )
+    renderFrame(enabledEffects.value, props.config.effectDuration, props.config.backgroundColor)
     animationId = requestAnimationFrame(loop)
   }
   loop()
 }
 
 function stopRenderLoop() {
-  if (animationId !== null) {
-    cancelAnimationFrame(animationId)
-    animationId = null
-  }
+  if (animationId !== null) { cancelAnimationFrame(animationId); animationId = null }
 }
 
-// 时间线可视化数据
+// Beat timeline data
 const timelineBeats = computed(() => {
   if (!props.beats.length) return []
-  const duration = props.beats[props.beats.length - 1]?.time || 1
+  const dur = props.beats[props.beats.length - 1]?.time || 1
   return props.beats.map((b) => ({
-    left: `${(b.time / (duration + 1)) * 100}%`,
-    height: `${30 + b.strength * 70}%`,
-    opacity: 0.3 + b.strength * 0.7,
+    left: `${(b.time / (dur + 1)) * 100}%`,
+    height: `${20 + b.strength * 80}%`,
+    opacity: 0.35 + b.strength * 0.65,
   }))
+})
+
+const playheadLeft = computed(() => {
+  const total = (props.beats[props.beats.length - 1]?.time ?? 0) + 1
+  return `${(props.currentTime / total) * 100}%`
 })
 
 onMounted(async () => {
@@ -121,124 +79,160 @@ onMounted(async () => {
   renderOnce()
 })
 
-onUnmounted(() => {
-  stopRenderLoop()
-})
+onUnmounted(() => stopRenderLoop())
 
-// 暴露 canvas ref 给父组件（用于导出）
-defineExpose({ canvasRef, reset })
+defineExpose({ canvasRef, reset, exportVideo })
 </script>
 
 <template>
-  <div class="animation-preview" ref="containerRef">
-    <div class="canvas-wrapper">
+  <div class="preview-root">
+    <!-- Canvas -->
+    <div class="canvas-shell">
       <canvas
         ref="canvasRef"
         :width="config.width"
         :height="config.height"
-        class="preview-canvas"
+        class="canvas"
       />
-
-      <!-- 播放状态指示 -->
-      <div v-if="!isPlaying && images.length > 0" class="play-overlay">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
-          <polygon points="5 3 19 12 5 21 5 3" />
+      <!-- Play hint overlay -->
+      <Transition name="overlay-fade">
+        <div v-if="!isPlaying && images.length > 0" class="play-hint">
+          <div class="play-hint-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="6 3 20 12 6 21 6 3"/>
+            </svg>
+          </div>
+        </div>
+      </Transition>
+      <!-- Empty state -->
+      <div v-if="images.length === 0" class="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.25">
+          <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
         </svg>
+        <span>上传图片后预览</span>
       </div>
     </div>
 
-    <!-- 节拍时间线 -->
-    <div class="beat-timeline" v-if="beats.length > 0">
-      <div class="timeline-track">
+    <!-- Beat timeline -->
+    <div class="timeline" v-if="beats.length > 0">
+      <div class="timeline-inner">
         <div
-          v-for="(beat, i) in timelineBeats"
+          v-for="(b, i) in timelineBeats"
           :key="i"
-          class="beat-marker"
-          :style="{
-            left: beat.left,
-            height: beat.height,
-            opacity: beat.opacity,
-          }"
+          class="beat-bar"
+          :style="{ left: b.left, height: b.height, opacity: b.opacity }"
         />
-        <!-- 播放指针 -->
-        <div
-          class="playhead"
-          :style="{
-            left: `${(currentTime / (beats[beats.length - 1]?.time + 1 || 1)) * 100}%`,
-          }"
-        />
+        <div class="playhead" :style="{ left: playheadLeft }" />
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.animation-preview {
+.preview-root {
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.canvas-wrapper {
+/* ── Canvas shell ── */
+.canvas-shell {
   position: relative;
-  border-radius: 16px;
-  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   background: #000;
-  aspect-ratio: 16/9;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.03),
+    0 16px 48px rgba(0,0,0,0.6);
 }
 
-.preview-canvas {
+.canvas {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: contain;
 }
 
-.play-overlay {
+/* ── Play hint ── */
+.play-hint {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.3);
-  color: rgba(255, 255, 255, 0.6);
+  background: rgba(0,0,0,0.32);
   pointer-events: none;
-  transition: opacity 0.3s;
 }
 
-.beat-timeline {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 8px 12px;
-  height: 48px;
+.play-hint-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.15);
 }
 
-.timeline-track {
+/* ── Empty state ── */
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ── Timeline ── */
+.timeline {
+  height: 44px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 6px 10px;
+  overflow: hidden;
+}
+
+.timeline-inner {
   position: relative;
   width: 100%;
   height: 100%;
 }
 
-.beat-marker {
+.beat-bar {
   position: absolute;
   bottom: 0;
-  width: 3px;
-  background: #646cff;
-  border-radius: 2px;
+  width: 2px;
+  background: linear-gradient(to top, var(--accent), #a898ff);
+  border-radius: 1px;
   transform: translateX(-50%);
-  transition: none;
 }
 
 .playhead {
   position: absolute;
-  top: -4px;
-  bottom: -4px;
+  top: -2px;
+  bottom: -2px;
   width: 2px;
-  background: #ff6b6b;
+  background: var(--pink);
   border-radius: 1px;
   transform: translateX(-50%);
-  box-shadow: 0 0 8px rgba(255, 107, 107, 0.5);
+  box-shadow: 0 0 6px var(--pink);
   z-index: 2;
 }
+
+/* ── Transitions ── */
+.overlay-fade-enter-active, .overlay-fade-leave-active { transition: opacity 0.25s; }
+.overlay-fade-enter-from, .overlay-fade-leave-to { opacity: 0; }
 </style>

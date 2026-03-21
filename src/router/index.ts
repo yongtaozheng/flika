@@ -13,6 +13,16 @@ const router = createRouter({
       name: 'filmstrip',
       component: () => import('../views/FilmStripPage.vue'),
     },
+    {
+      path: '/music-ball',
+      name: 'music-ball',
+      component: () => import('../views/MusicBallPage.vue'),
+    },
+    {
+      path: '/splice',
+      name: 'splice',
+      component: () => import('../views/RippleSplicePage.vue'),
+    },
   ],
 })
 

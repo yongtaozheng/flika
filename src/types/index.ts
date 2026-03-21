@@ -21,6 +21,12 @@ export type AnimationEffect =
   | 'flipX'       // 水平翻转
   | 'pixelate'    // 像素化
   | 'colorInvert' // 颜色反转
+  | 'vortex'      // 漩涡旋转
+  | 'chromatic'   // 色散（色差偏移）
+  | 'wave'        // 波浪扭曲
+  | 'split'       // 四象限分裂
+  | 'neonGlow'    // 霓虹发光边框
+  | 'heartbeat'   // 心跳双脉冲
 
 /** 动画效果配置 */
 export interface EffectConfig {
@@ -70,4 +76,26 @@ export interface ExportConfig {
   format: 'webm' | 'gif'
   quality: number
   fps: number
+}
+
+/** 涟漪拼接素材项 */
+export interface SpliceItem {
+  id: string
+  file: File
+  url: string
+  name: string
+  type: 'image' | 'video'
+  /** 展示时长（ms） */
+  holdDuration: number
+}
+
+/** 涟漪过渡参数 */
+export interface RippleConfig {
+  waveAmplitude: number
+  waveCount: number
+  waveWidth: number
+  /** 过渡动画时长（ms） */
+  transitionDuration: number
+  /** 像素块大小（性能优化，值越大渲染越快但越粗糙） */
+  step: number
 }

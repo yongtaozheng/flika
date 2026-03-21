@@ -136,6 +136,23 @@ export function useAnimationEngine(
   }
 
   /**
+   * 计算心跳效果的进度（双脉冲）
+   */
+  function getHeartbeatProgress(effect: AnimationEffect, time: number, effectDuration: number): number {
+    const state = activeEffects.value.get(effect)
+    if (!state) return 0
+    const elapsed = time - state.startTime
+    const duration = effectDuration / 1000
+    if (elapsed < 0 || elapsed > duration) return 0
+    const t = elapsed / duration
+    // 双脉冲：模拟心跳的 lub-dub 节奏
+    const pulse1 = Math.sin(t * Math.PI * 2) * Math.exp(-t * 3)
+    const pulse2 = Math.sin((t - 0.15) * Math.PI * 2) * Math.exp(-(t - 0.15) * 5)
+    const combined = Math.max(0, pulse1) + Math.max(0, pulse2) * 0.6
+    return combined * state.strength
+  }
+
+  /**
    * 渲染单帧到 Canvas
    */
   function renderFrame(
@@ -237,6 +254,24 @@ export function useAnimationEngine(
           }
           break
         }
+        case 'vortex': {
+          if (p > 0) {
+            // 漩涡效果：快速旋转并缩放，产生螺旋吸入感
+            rotation += p * Math.PI * 2
+            scale *= 1 - p * 0.3
+          }
+          break
+        }
+        case 'heartbeat': {
+          const hp = getHeartbeatProgress('heartbeat', time, effectDuration)
+          if (hp > 0) {
+            scale += hp * 0.2
+          }
+          break
+        }
+        case 'split':
+          // split 在图片绘制后处理（需要绘制四个象限）
+          break
         case 'glitch':
           // glitch 在图片绘制后处理
           break
@@ -245,6 +280,15 @@ export function useAnimationEngine(
           break
         case 'colorInvert':
           // colorInvert 在图片绘制后处理
+          break
+        case 'chromatic':
+          // chromatic 在图片绘制后处理
+          break
+        case 'wave':
+          // wave 在图片绘制后处理
+          break
+        case 'neonGlow':
+          // neonGlow 在图片绘制后处理
           break
       }
     }
@@ -393,6 +437,197 @@ export function useAnimationEngine(
       } catch {
         // getImageData 可能因跨域限制失败，静默忽略
       }
+    }
+
+    // Chromatic 色散效果 - 优雅的 RGB 色差偏移
+    const chromaticP = getEffectProgress('chromatic', time, effectDuration)
+    if (chromaticP > 0) {
+      const offset = Math.round(chromaticP * 15)
+      if (offset > 0) {
+        try {
+          const imageData = ctx.getImageData(0, 0, width, height)
+          const data = imageData.data
+          const tempData = new Uint8ClampedArray(data)
+
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const dstIdx = (y * width + x) * 4
+
+              // 红色通道向右上偏移
+              const rSrcX = Math.min(width - 1, Math.max(0, x + offset))
+              const rSrcY = Math.min(height - 1, Math.max(0, y - Math.round(offset * 0.5)))
+              const rSrcIdx = (rSrcY * width + rSrcX) * 4
+              data[dstIdx] = tempData[rSrcIdx] // R
+
+              // 绿色通道保持不变
+
+              // 蓝色通道向左下偏移
+              const bSrcX = Math.min(width - 1, Math.max(0, x - offset))
+              const bSrcY = Math.min(height - 1, Math.max(0, y + Math.round(offset * 0.5)))
+              const bSrcIdx = (bSrcY * width + bSrcX) * 4
+              data[dstIdx + 2] = tempData[bSrcIdx + 2] // B
+            }
+          }
+
+          ctx.putImageData(imageData, 0, 0)
+        } catch {
+          // 静默忽略
+        }
+      }
+    }
+
+    // Wave 波浪扭曲效果 - 正弦波像素位移
+    const waveP = getEffectProgress('wave', time, effectDuration)
+    if (waveP > 0) {
+      try {
+        const imageData = ctx.getImageData(0, 0, width, height)
+        const srcData = new Uint8ClampedArray(imageData.data)
+        const data = imageData.data
+        const amplitude = waveP * 20     // 波浪振幅（像素）
+        const frequency = 0.03            // 波浪频率
+        const phase = time * 8            // 动态相位，让波浪流动
+
+        for (let y = 0; y < height; y++) {
+          // 水平方向正弦偏移
+          const xShift = Math.round(Math.sin(y * frequency + phase) * amplitude)
+          // 垂直方向余弦偏移（更微妙）
+          const yShift = Math.round(Math.cos(y * frequency * 0.7 + phase * 0.5) * amplitude * 0.3)
+
+          for (let x = 0; x < width; x++) {
+            const srcX = Math.min(width - 1, Math.max(0, x + xShift))
+            const srcY = Math.min(height - 1, Math.max(0, y + yShift))
+            const dstIdx = (y * width + x) * 4
+            const srcIdx = (srcY * width + srcX) * 4
+            data[dstIdx] = srcData[srcIdx]
+            data[dstIdx + 1] = srcData[srcIdx + 1]
+            data[dstIdx + 2] = srcData[srcIdx + 2]
+            data[dstIdx + 3] = srcData[srcIdx + 3]
+          }
+        }
+
+        ctx.putImageData(imageData, 0, 0)
+      } catch {
+        // 静默忽略
+      }
+    }
+
+    // Split 四象限分裂效果 - 图片分成四块飞散
+    const splitP = getEffectProgress('split', time, effectDuration)
+    if (splitP > 0) {
+      try {
+        const splitDist = splitP * 60 // 分裂距离（像素）
+        const halfW = Math.floor(width / 2)
+        const halfH = Math.floor(height / 2)
+
+        // 获取当前画面
+        const imageData = ctx.getImageData(0, 0, width, height)
+
+        // 创建临时 canvas 保存原图
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = width
+        tempCanvas.height = height
+        const tempCtx = tempCanvas.getContext('2d')
+        if (tempCtx) {
+          tempCtx.putImageData(imageData, 0, 0)
+
+          // 清除并重绘四个象限，各自带偏移
+          ctx.fillStyle = backgroundColor
+          ctx.fillRect(0, 0, width, height)
+
+          // 左上 → 向左上移动
+          ctx.drawImage(tempCanvas, 0, 0, halfW, halfH,
+            -splitDist, -splitDist, halfW, halfH)
+          // 右上 → 向右上移动
+          ctx.drawImage(tempCanvas, halfW, 0, halfW, halfH,
+            halfW + splitDist, -splitDist, halfW, halfH)
+          // 左下 → 向左下移动
+          ctx.drawImage(tempCanvas, 0, halfH, halfW, halfH,
+            -splitDist, halfH + splitDist, halfW, halfH)
+          // 右下 → 向右下移动
+          ctx.drawImage(tempCanvas, halfW, halfH, halfW, halfH,
+            halfW + splitDist, halfH + splitDist, halfW, halfH)
+
+          // 在分裂缝隙处添加发光线条
+          if (splitDist > 2) {
+            ctx.save()
+            ctx.strokeStyle = `rgba(100, 108, 255, ${splitP * 0.8})`
+            ctx.lineWidth = 2
+            ctx.shadowColor = '#646cff'
+            ctx.shadowBlur = splitDist * 0.5
+
+            // 水平分割线
+            ctx.beginPath()
+            ctx.moveTo(0, halfH)
+            ctx.lineTo(width, halfH)
+            ctx.stroke()
+
+            // 垂直分割线
+            ctx.beginPath()
+            ctx.moveTo(halfW, 0)
+            ctx.lineTo(halfW, height)
+            ctx.stroke()
+
+            ctx.restore()
+          }
+        }
+      } catch {
+        // 静默忽略
+      }
+    }
+
+    // NeonGlow 霓虹发光边框效果
+    const neonP = getEffectProgress('neonGlow', time, effectDuration)
+    if (neonP > 0) {
+      ctx.save()
+
+      const glowSize = neonP * 25
+      const borderWidth = 3 + neonP * 4
+      const hue = (time * 120) % 360 // 随时间变化的彩虹色相
+
+      // 外层辉光
+      ctx.shadowBlur = glowSize
+      ctx.shadowColor = `hsl(${hue}, 100%, 60%)`
+      ctx.lineWidth = borderWidth
+      ctx.strokeStyle = `hsla(${hue}, 100%, 70%, ${neonP * 0.9})`
+
+      // 画发光边框（带圆角）
+      const margin = 15
+      const radius = 12
+      ctx.beginPath()
+      ctx.roundRect(margin, margin, width - margin * 2, height - margin * 2, radius)
+      ctx.stroke()
+
+      // 第二层辉光（互补色）
+      const hue2 = (hue + 180) % 360
+      ctx.shadowBlur = glowSize * 0.6
+      ctx.shadowColor = `hsl(${hue2}, 100%, 60%)`
+      ctx.lineWidth = borderWidth * 0.5
+      ctx.strokeStyle = `hsla(${hue2}, 100%, 70%, ${neonP * 0.5})`
+
+      const margin2 = 25
+      ctx.beginPath()
+      ctx.roundRect(margin2, margin2, width - margin2 * 2, height - margin2 * 2, radius)
+      ctx.stroke()
+
+      // 四个角的亮点装饰
+      const dotSize = 4 + neonP * 3
+      ctx.fillStyle = `hsla(${hue}, 100%, 85%, ${neonP * 0.9})`
+      ctx.shadowBlur = dotSize * 3
+      ctx.shadowColor = `hsl(${hue}, 100%, 70%)`
+
+      const corners = [
+        [margin + radius, margin + radius],
+        [width - margin - radius, margin + radius],
+        [margin + radius, height - margin - radius],
+        [width - margin - radius, height - margin - radius],
+      ]
+      for (const [cx, cy] of corners) {
+        ctx.beginPath()
+        ctx.arc(cx, cy, dotSize, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      ctx.restore()
     }
   }
 

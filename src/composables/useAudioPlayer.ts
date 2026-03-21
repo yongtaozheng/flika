@@ -140,6 +140,7 @@ export function useAudioPlayer() {
 
   return {
     audio,
+    audioElement: audio,
     isPlaying,
     currentTime,
     duration,
