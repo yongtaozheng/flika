@@ -61,7 +61,7 @@ const engine = useIntroEngine(canvasRef, configRef)
 // ─── Audio ─────────────────────────────────────────────────────────────────
 
 const audioPlayer = useAudioPlayer()
-const { audio: audioElement, isPlaying, currentTime, duration, loadAudio, togglePlay, seek } = audioPlayer
+const { audio: audioElement, isPlaying, currentTime, loadAudio, togglePlay, seek } = audioPlayer
 const audioFile = ref<File | null>(null)
 
 const { beats, analyzeBeats } = useBeatDetector()

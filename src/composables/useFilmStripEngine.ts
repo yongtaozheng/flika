@@ -207,7 +207,7 @@ export function useFilmStripEngine(
     }
   }
 
-  function drawVideoColumn(c: CanvasRenderingContext2D, colX: number, col: FilmColumnData, scrollY: number) {
+  function drawVideoColumn(c: CanvasRenderingContext2D, colX: number, col: FilmColumnData, _scrollY: number) {
     const frX = colX + FR_X_LOCAL
     c.fillStyle = '#0a0908'; c.fillRect(colX, 0, COL_W, FILM_H)
     const el = videoEls.get(col.id)

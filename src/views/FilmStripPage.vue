@@ -336,7 +336,6 @@ async function handleExport() {
 function fmtTime(s: number) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
-function colImgCount(i: number) { return columns[i].images.length }
 function hasContent(i: number) {
   const c = columns[i]
   return c.type === 'images' ? c.images.length > 0 : !!c.videoFile
@@ -551,7 +550,7 @@ onUnmounted(() => {
           <!-- Export -->
           <div class="ctrl-group">
             <button class="export-btn"
-                    :disabled="!activeCols.some((c,i) => hasContent(i)) || isExporting"
+                    :disabled="!activeCols.some((_c,i) => hasContent(i)) || isExporting"
                     @click="handleExport">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
