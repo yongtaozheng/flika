@@ -126,19 +126,29 @@ function clearLogo() {
 
 // ─── Background media ──────────────────────────────────────────────────────
 
+function guessMediaType(file: File): 'image' | 'video' | null {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type.startsWith('video/')) return 'video'
+  // Tauri desktop: File.type may be empty, fall back to extension
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  if (['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v'].includes(ext)) return 'video'
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)) return 'image'
+  return null
+}
+
 async function handleBgDrop(e: DragEvent) {
   e.preventDefault()
   const file = e.dataTransfer?.files[0]
   if (!file) return
-  if (file.type.startsWith('image/')) await setBgFile(file, 'image')
-  else if (file.type.startsWith('video/')) await setBgFile(file, 'video')
+  const t = guessMediaType(file)
+  if (t) await setBgFile(file, t)
 }
 
 async function handleBgInput(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
-  if (file.type.startsWith('image/')) await setBgFile(file, 'image')
-  else if (file.type.startsWith('video/')) await setBgFile(file, 'video')
+  const t = guessMediaType(file)
+  if (t) await setBgFile(file, t)
 }
 
 async function setBgFile(file: File, type: 'image' | 'video') {

@@ -43,6 +43,7 @@ const BLACK_KEY_PATTERN = [1, 1, 0, 1, 1, 1, 0] // C#D# F#G#A#
 const GRAVITY = 980
 const BOUNCE_DAMPING = 0.45
 const MAX_BOUNCES = 3
+const SPAWN_LOOKAHEAD = 0.8  // 提前多少秒生成小球，使其落键时刻对准节拍
 const BALL_COLORS = [
   { fill: '#ff6b9d', glow: 'rgba(255,107,157,0.6)' },
   { fill: '#c084fc', glow: 'rgba(192,132,252,0.6)' },
@@ -149,7 +150,8 @@ function handleAudioSelect(e: Event) {
 }
 
 // --- 生成小球 ---
-function spawnBall(canvas: HTMLCanvasElement, strength: number = 0.7) {
+// timeUntilBeat: 距节拍还有多少秒；有值时精确计算初速，使落键时刻对准节拍
+function spawnBall(canvas: HTMLCanvasElement, strength: number = 0.7, timeUntilBeat?: number) {
   const layout = getPianoLayout(canvas.width, canvas.height)
   const keyIndex = Math.floor(Math.random() * TOTAL_WHITE_KEYS)
   const colorIdx = Math.floor(Math.random() * BALL_COLORS.length)
@@ -161,13 +163,25 @@ function spawnBall(canvas: HTMLCanvasElement, strength: number = 0.7) {
   const baseRadius = 8 + strength * 8
   const radius = baseRadius * ballSize.value
 
-  // 从顶部落下，有少量水平偏移
+  let vy: number
+  if (timeUntilBeat !== undefined && timeUntilBeat > 0.05) {
+    // 精确计算：让小球从顶部出发，在 timeUntilBeat 秒后恰好落到钢琴顶面
+    const y0 = -radius * 2
+    const groundY = layout.pianoTop
+    const distance = groundY - radius - y0
+    vy = (distance - 0.5 * GRAVITY * timeUntilBeat * timeUntilBeat) / timeUntilBeat
+    vy = Math.max(30, vy)  // 防止极端值
+  } else {
+    // 自动演示模式：使用速度滑块
+    vy = 60 + Math.random() * 40 + strength * ballSpeed.value * 40
+  }
+
   const ball: Ball = {
     id: nextBallId++,
     x: targetX + (Math.random() - 0.5) * 10,
     y: -radius * 2,
     vx: (Math.random() - 0.5) * 30,
-    vy: 60 + Math.random() * 40 + strength * ballSpeed.value * 40,
+    vy,
     radius,
     color: color.fill,
     glowColor: color.glow,
@@ -183,10 +197,14 @@ function spawnBall(canvas: HTMLCanvasElement, strength: number = 0.7) {
 }
 
 // 批量生成（节拍强度越大，生成越多）
-function spawnBallsForBeat(canvas: HTMLCanvasElement, strength: number) {
+function spawnBallsForBeat(canvas: HTMLCanvasElement, strength: number, timeUntilBeat?: number) {
   const count = Math.max(1, Math.round(strength * 3))
   for (let i = 0; i < count; i++) {
-    setTimeout(() => spawnBall(canvas, strength), i * 40)
+    const staggerSec = i * 0.04  // 错开 40ms，避免完全重叠
+    setTimeout(
+      () => spawnBall(canvas, strength, timeUntilBeat !== undefined ? Math.max(0.05, timeUntilBeat - staggerSec) : undefined),
+      i * 40,
+    )
   }
 }
 
@@ -505,17 +523,31 @@ function animationLoop(timestamp: number) {
   const delta = Math.min(rawDelta, 0.05) // 限制最大 delta 防止跳帧
   lastTimestamp = timestamp
 
-  // 节拍触发小球
+  // CSS 像素坐标 canvas（物理更新与小球生成均使用 CSS 像素，避免高 DPI 坐标偏差）
+  const dpr = window.devicePixelRatio || 1
+  const cssCanvas = {
+    width: canvas.width / dpr,
+    height: canvas.height / dpr,
+  } as HTMLCanvasElement
+  Object.defineProperty(cssCanvas, 'parentElement', { value: canvas.parentElement })
+
+  // 节拍触发小球（提前 SPAWN_LOOKAHEAD 秒生成，精确计算初速使落键对准节拍）
   if (isPlaying.value && beats.value.length > 0) {
     const time = currentTime.value
-    for (let i = 0; i < beats.value.length; i++) {
+    for (let i = lastBeatIndex + 1; i < beats.value.length; i++) {
       const beat = beats.value[i]
-      const diff = time - beat.time
-      if (diff >= 0 && diff < 0.08 && i > lastBeatIndex) {
-        spawnBallsForBeat(canvas, beat.strength)
+      const timeUntilBeat = beat.time - time
+      if (timeUntilBeat < -0.05) {
+        // 已过期的节拍直接跳过
         lastBeatIndex = i
-        break
+        continue
       }
+      if (timeUntilBeat <= SPAWN_LOOKAHEAD) {
+        // 节拍进入生成窗口，立即生成小球
+        spawnBallsForBeat(cssCanvas, beat.strength, timeUntilBeat)
+        lastBeatIndex = i
+      }
+      break  // 每帧最多处理一个节拍
     }
   }
 
@@ -524,19 +556,11 @@ function animationLoop(timestamp: number) {
     autoModeTimer += delta
     if (autoModeTimer > 0.3 + Math.random() * 0.3) {
       autoModeTimer = 0
-      spawnBall(canvas, 0.3 + Math.random() * 0.7)
+      spawnBall(cssCanvas, 0.3 + Math.random() * 0.7)
     }
   }
 
   // 更新物理
-  // 使用 CSS 像素坐标（非设备像素）
-  const dpr = window.devicePixelRatio || 1
-  const cssCanvas = {
-    width: canvas.width / dpr,
-    height: canvas.height / dpr,
-  } as HTMLCanvasElement
-  // 用一个临时对象适配 getPianoLayout
-  Object.defineProperty(cssCanvas, 'parentElement', { value: canvas.parentElement })
   updateBalls(delta, cssCanvas)
   updateRipples(delta)
 
@@ -551,10 +575,18 @@ function animationLoop(timestamp: number) {
   animFrameId = requestAnimationFrame(animationLoop)
 }
 
-// 播放/停止时重置
+// 播放/恢复时，将 lastBeatIndex 定位到当前进度之前，
+// 保证 look-ahead 窗口内的节拍能在正确时机被生成
 watch(isPlaying, (playing) => {
   if (playing) {
+    const time = currentTime.value
     lastBeatIndex = -1
+    for (let i = beats.value.length - 1; i >= 0; i--) {
+      if (beats.value[i].time < time - SPAWN_LOOKAHEAD) {
+        lastBeatIndex = i
+        break
+      }
+    }
   }
 })
 

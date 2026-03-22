@@ -121,7 +121,7 @@ function togglePreview() {
   } else {
     localPlaying = !localPlaying
   }
-  if (localPlaying || (audioFile.value && !isPlaying.value)) {
+  if (localPlaying || (audioFile.value && isPlaying.value)) {
     playActiveVideos()
   } else {
     pauseAllVideos()
@@ -223,7 +223,10 @@ function moveImage(colIdx: number, imgIdx: number, dir: -1 | 1) {
 function onVideoDrop(e: DragEvent, colIdx: number) {
   e.preventDefault()
   const f = e.dataTransfer?.files[0]
-  if (f?.type.startsWith('video/')) loadVideo(f, colIdx)
+  if (!f) return
+  const ext = f.name.split('.').pop()?.toLowerCase() ?? ''
+  const isVideo = f.type.startsWith('video/') || ['mp4', 'webm', 'mov', 'avi', 'mkv', 'm4v'].includes(ext)
+  if (isVideo) loadVideo(f, colIdx)
 }
 function onVideoInput(e: Event, colIdx: number) {
   const f = (e.target as HTMLInputElement).files?.[0]

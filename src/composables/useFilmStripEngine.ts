@@ -95,13 +95,13 @@ export function useFilmStripEngine(
     clearColumnVideo(colId)
     return new Promise<HTMLVideoElement>(res => {
       const el        = document.createElement('video')
-      el.src          = url
       el.muted        = true
       el.preload      = 'auto'
       el.playsInline  = true
-      el.currentTime  = startTime
       el.oncanplay    = () => { el.currentTime = startTime; videoEls.set(colId, el); res(el) }
       el.onerror      = () => { videoEls.set(colId, el); res(el) }
+      el.src          = url
+      el.load()
     })
   }
 
