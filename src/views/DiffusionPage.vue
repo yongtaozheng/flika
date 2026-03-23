@@ -1,0 +1,781 @@
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import type { UploadedImage, DiffusionImage, DiffusionConfig } from '../types'
+import { useDiffusionEngine } from '../composables/useDiffusionEngine'
+import { saveVideoFile } from '../utils/filePicker'
+import ImageUploader from '../components/ImageUploader.vue'
+
+// ── Canvas ──────────────────────────────────────────────────────────────────
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+const CW = 1280
+const CH = 720
+
+// ── Images ──────────────────────────────────────────────────────────────────
+const images = ref<DiffusionImage[]>([])
+const uploaderImages = computed<UploadedImage[]>(() =>
+  images.value.map(({ id, file, url, name }) => ({ id, file, url, name })),
+)
+
+// ── Config ──────────────────────────────────────────────────────────────────
+const config = reactive<DiffusionConfig>({
+  spreadDuration: 3000,
+  pauseDuration: 1000,
+  loop: true,
+  edgeWidth: 30,
+  rippleEnabled: true,
+})
+const configRef = computed(() => ({ ...config }))
+
+// ── Engine ──────────────────────────────────────────────────────────────────
+const engine = useDiffusionEngine(canvasRef, images, configRef)
+
+// ── Editing state ───────────────────────────────────────────────────────────
+const editingMode = ref(false)
+const selectedImageIndex = ref(0)
+const currentImage = computed(() => images.value[selectedImageIndex.value] ?? null)
+const currentImagePoints = computed(() => currentImage.value?.points ?? [])
+
+// ── Playback state ──────────────────────────────────────────────────────────
+const isPlaying = ref(false)
+const isExporting = ref(false)
+const exportProgress = ref(0)
+const playElapsed = ref(0)
+
+let rafId: number | null = null
+let playStartMs = 0
+
+// ── Canvas helpers ──────────────────────────────────────────────────────────
+function clearCanvas() {
+  const c = canvasRef.value?.getContext('2d')
+  if (c) { c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH) }
+}
+
+// ── Image management ────────────────────────────────────────────────────────
+function handleImagesAdd(newImgs: UploadedImage[]) {
+  const diffImgs: DiffusionImage[] = newImgs.map((img) => ({
+    ...img,
+    points: [],
+  }))
+  images.value = [...images.value, ...diffImgs]
+
+  engine.preloadImages().then(() => {
+    engine.precomputeAll()
+    if (!isPlaying.value && images.value.length > 0) {
+      engine.renderStaticFrame(selectedImageIndex.value)
+    }
+  })
+}
+
+function handleImageRemove(id: string) {
+  const img = images.value.find((i) => i.id === id)
+  if (img) URL.revokeObjectURL(img.url)
+  images.value = images.value.filter((i) => i.id !== id)
+  if (selectedImageIndex.value >= images.value.length) {
+    selectedImageIndex.value = Math.max(0, images.value.length - 1)
+  }
+  if (images.value.length === 0) clearCanvas()
+  else if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
+}
+
+function handleImagesReorder(reordered: UploadedImage[]) {
+  const pointsMap = new Map(images.value.map((img) => [img.id, img.points]))
+  images.value = reordered.map((img) => ({
+    ...img,
+    points: pointsMap.get(img.id) ?? [],
+  }))
+}
+
+// ── Point editing ───────────────────────────────────────────────────────────
+function handleCanvasClick(e: MouseEvent) {
+  if (!editingMode.value || isPlaying.value) return
+  if (images.value.length === 0) return
+
+  const canvas = canvasRef.value
+  if (!canvas) return
+
+  const rect = canvas.getBoundingClientRect()
+  const scaleX = canvas.width / rect.width
+  const scaleY = canvas.height / rect.height
+  const pixelX = (e.clientX - rect.left) * scaleX
+  const pixelY = (e.clientY - rect.top) * scaleY
+
+  const nx = pixelX / canvas.width
+  const ny = pixelY / canvas.height
+
+  const img = images.value[selectedImageIndex.value]
+  if (!img) return
+
+  img.points.push({ id: crypto.randomUUID(), x: nx, y: ny })
+  engine.precomputeImage(img)
+  engine.renderStaticFrame(selectedImageIndex.value)
+}
+
+function removePoint(imageId: string, pointId: string) {
+  const img = images.value.find((i) => i.id === imageId)
+  if (!img) return
+  img.points = img.points.filter((p) => p.id !== pointId)
+  engine.precomputeImage(img)
+  if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
+}
+
+function clearPoints(imageId: string) {
+  const img = images.value.find((i) => i.id === imageId)
+  if (!img) return
+  img.points = []
+  engine.precomputeImage(img)
+  if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
+}
+
+function pointMarkerStyle(pt: { x: number; y: number }) {
+  return {
+    left: `${pt.x * 100}%`,
+    top: `${pt.y * 100}%`,
+  }
+}
+
+// ── Image selection ─────────────────────────────────────────────────────────
+function selectImage(idx: number) {
+  selectedImageIndex.value = idx
+  if (!isPlaying.value) engine.renderStaticFrame(idx)
+}
+
+// ── Playback ────────────────────────────────────────────────────────────────
+function play() {
+  if (images.value.length === 0) return
+  isPlaying.value = true
+  editingMode.value = false
+  playStartMs = performance.now()
+
+  function loop() {
+    if (!isPlaying.value) return
+    const elapsed = performance.now() - playStartMs
+    playElapsed.value = elapsed
+    engine.renderFrame(elapsed)
+
+    // Check if non-loop playback finished
+    if (!config.loop) {
+      const total = images.value.length * (config.spreadDuration + config.pauseDuration)
+      if (elapsed >= total) {
+        isPlaying.value = false
+        return
+      }
+    }
+
+    rafId = requestAnimationFrame(loop)
+  }
+  rafId = requestAnimationFrame(loop)
+}
+
+function stop() {
+  isPlaying.value = false
+  playElapsed.value = 0
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+  if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
+  else clearCanvas()
+}
+
+// ── Export ───────────────────────────────────────────────────────────────────
+async function handleExport() {
+  if (images.value.length === 0) return
+  isExporting.value = true
+  exportProgress.value = 0
+
+  try {
+    const blob = await engine.exportVideo((p) => { exportProgress.value = p })
+    await saveVideoFile(blob)
+  } catch (e) {
+    console.error('导出失败', e)
+    alert('导出失败，请重试')
+  } finally {
+    isExporting.value = false
+    exportProgress.value = 0
+  }
+}
+
+// ── Status ──────────────────────────────────────────────────────────────────
+const statusText = computed(() => {
+  if (isExporting.value) return `导出中 ${Math.round(exportProgress.value * 100)}%`
+  if (images.value.length === 0) return '添加图片后开始'
+  if (!isPlaying.value) {
+    const totalPts = images.value.reduce((s, img) => s + img.points.length, 0)
+    return `${images.value.length} 张图片 · ${totalPts} 个扩散点`
+  }
+  const info = engine.getPlaybackInfo(playElapsed.value)
+  if (info.phase === 'spreading')
+    return `第 ${info.index + 1}/${images.value.length} 张 · 扩散中 ${Math.round(info.progress * 100)}%`
+  return `第 ${info.index + 1}/${images.value.length} 张 · 停留中`
+})
+
+const statusPhase = computed(() => {
+  if (!isPlaying.value) return 'idle'
+  const info = engine.getPlaybackInfo(playElapsed.value)
+  return info.phase
+})
+
+// ── Fullscreen ──────────────────────────────────────────────────────────────
+const canvasShellRef = ref<HTMLDivElement | null>(null)
+const isFullscreen = ref(false)
+
+function toggleFullscreen() {
+  if (!canvasShellRef.value) return
+  if (!document.fullscreenElement) {
+    canvasShellRef.value.requestFullscreen().catch(() => {})
+  } else {
+    document.exitFullscreen().catch(() => {})
+  }
+}
+
+function onFullscreenChange() {
+  isFullscreen.value = !!document.fullscreenElement
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.code !== 'Space' || !isFullscreen.value) return
+  if (isExporting.value) return
+  e.preventDefault()
+  if (isPlaying.value) stop()
+  else play()
+}
+
+// ── Slider fill ─────────────────────────────────────────────────────────────
+function sliderFill(value: number, min: number, max: number) {
+  const pct = ((value - min) / (max - min)) * 100
+  return {
+    background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--surface-3) ${pct}%, var(--surface-3) 100%)`,
+  }
+}
+
+// ── Lifecycle ───────────────────────────────────────────────────────────────
+onMounted(() => {
+  if (canvasRef.value) {
+    canvasRef.value.width = CW
+    canvasRef.value.height = CH
+    clearCanvas()
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  stop()
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  document.removeEventListener('keydown', onKeydown)
+  for (const img of images.value) URL.revokeObjectURL(img.url)
+})
+</script>
+
+<template>
+  <div class="diffusion-page">
+    <!-- ── Left: Canvas preview ── -->
+    <div class="preview-col">
+      <div ref="canvasShellRef" class="canvas-shell" :class="{ 'is-fullscreen': isFullscreen }">
+        <canvas
+          ref="canvasRef"
+          :width="CW"
+          :height="CH"
+          class="canvas"
+          :class="{ 'edit-cursor': editingMode && !isPlaying }"
+          @click="handleCanvasClick"
+        />
+
+        <!-- Fullscreen toggle -->
+        <button class="fullscreen-btn" @click.stop="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏播放'">
+          <svg v-if="!isFullscreen" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+          </svg>
+        </button>
+
+        <!-- Empty state -->
+        <div v-if="images.length === 0" class="empty-state">
+          <svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
+            <circle cx="22" cy="22" r="4" />
+            <circle cx="22" cy="22" r="11" />
+            <circle cx="22" cy="22" r="19" />
+          </svg>
+          <span>添加图片后预览扩散着色效果</span>
+        </div>
+
+        <!-- Point markers (editing mode) -->
+        <template v-if="editingMode && !isPlaying && currentImage">
+          <div
+            v-for="(pt, idx) in currentImagePoints"
+            :key="pt.id"
+            class="point-marker"
+            :style="pointMarkerStyle(pt)"
+            @click.stop="removePoint(currentImage.id, pt.id)"
+            :title="`点 ${idx + 1} — 点击移除`"
+          >
+            <span class="point-marker-num">{{ idx + 1 }}</span>
+          </div>
+        </template>
+
+        <!-- Edit hint -->
+        <Transition name="hint-fade">
+          <div v-if="editingMode && !isPlaying && currentImage && currentImagePoints.length === 0" class="edit-hint">
+            点击画布添加扩散点
+          </div>
+        </Transition>
+      </div>
+
+      <!-- Status bar -->
+      <div class="status-bar">
+        <span class="status-dot" :class="statusPhase" />
+        <span class="status-text">{{ statusText }}</span>
+        <div v-if="isExporting" class="export-progress-wrap">
+          <div class="export-progress-fill" :style="{ width: `${exportProgress * 100}%` }" />
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Right: Sidebar ── -->
+    <aside class="sidebar">
+
+      <!-- Image uploader -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
+          </svg>
+          <span>图片素材</span>
+          <span v-if="images.length" class="block-badge">{{ images.length }}</span>
+        </div>
+        <ImageUploader
+          :images="uploaderImages"
+          @add="handleImagesAdd"
+          @remove="handleImageRemove"
+          @reorder="handleImagesReorder"
+        />
+      </div>
+
+      <!-- Diffusion points editor -->
+      <div v-if="images.length > 0" class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" opacity="0.3" /><circle cx="12" cy="12" r="6" opacity="0.5" /><circle cx="12" cy="12" r="2" />
+          </svg>
+          <span>扩散点</span>
+          <span class="block-badge">{{ currentImagePoints.length }}</span>
+        </div>
+
+        <!-- Image tabs -->
+        <div class="image-tabs">
+          <button
+            v-for="(img, idx) in images"
+            :key="img.id"
+            class="image-tab"
+            :class="{ active: selectedImageIndex === idx }"
+            @click="selectImage(idx)"
+          >
+            <img :src="img.url" class="tab-thumb" />
+            <span class="tab-idx">{{ idx + 1 }}</span>
+            <span class="tab-pts">{{ img.points.length }}点</span>
+          </button>
+        </div>
+
+        <!-- Edit mode toggle + clear -->
+        <div class="point-actions">
+          <button
+            class="edit-toggle"
+            :class="{ active: editingMode }"
+            @click="editingMode = !editingMode"
+            :disabled="isPlaying"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            {{ editingMode ? '退出编辑' : '编辑扩散点' }}
+          </button>
+          <button
+            v-if="currentImagePoints.length > 0"
+            class="clear-btn"
+            @click="clearPoints(currentImage!.id)"
+            :disabled="isPlaying"
+          >
+            清空
+          </button>
+        </div>
+
+        <!-- Point list -->
+        <div v-if="currentImagePoints.length > 0" class="point-list">
+          <div v-for="(pt, idx) in currentImagePoints" :key="pt.id" class="point-item">
+            <span class="point-num">{{ idx + 1 }}</span>
+            <span class="point-coord">{{ (pt.x * 100).toFixed(0) }}%, {{ (pt.y * 100).toFixed(0) }}%</span>
+            <button class="point-del" @click="removePoint(currentImage!.id, pt.id)" :disabled="isPlaying">
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Playback controls -->
+      <div class="sidebar-block controls-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          <span>播放控制</span>
+        </div>
+        <div class="playback-btns">
+          <button class="btn-play" :disabled="images.length === 0 || isExporting" @click="isPlaying ? stop() : play()">
+            <svg v-if="!isPlaying" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+            <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+            {{ isPlaying ? '停止' : '播放预览' }}
+          </button>
+          <button class="btn-export" :disabled="images.length === 0 || isExporting || isPlaying" @click="handleExport">
+            <span v-if="isExporting" class="spinner" />
+            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {{ isExporting ? `${Math.round(exportProgress * 100)}%` : '导出视频' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Diffusion settings -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          <span>扩散参数</span>
+        </div>
+
+        <div class="setting-row">
+          <label>扩散时长</label>
+          <div class="setting-ctl">
+            <input type="range" min="1000" max="10000" step="500"
+              v-model.number="config.spreadDuration"
+              :style="sliderFill(config.spreadDuration, 1000, 10000)" />
+            <span class="setting-val">{{ (config.spreadDuration / 1000).toFixed(1) }}s</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label>停留时间</label>
+          <div class="setting-ctl">
+            <input type="range" min="0" max="5000" step="250"
+              v-model.number="config.pauseDuration"
+              :style="sliderFill(config.pauseDuration, 0, 5000)" />
+            <span class="setting-val">{{ (config.pauseDuration / 1000).toFixed(1) }}s</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <label>边缘柔和</label>
+          <div class="setting-ctl">
+            <input type="range" min="5" max="100" step="5"
+              v-model.number="config.edgeWidth"
+              :style="sliderFill(config.edgeWidth, 5, 100)" />
+            <span class="setting-val">{{ config.edgeWidth }}px</span>
+          </div>
+        </div>
+
+        <label class="loop-toggle">
+          <input type="checkbox" v-model="config.loop" />
+          <span class="loop-label">循环播放</span>
+        </label>
+
+        <label class="loop-toggle">
+          <input type="checkbox" v-model="config.rippleEnabled" />
+          <span class="loop-label">涟漪光波</span>
+        </label>
+      </div>
+
+    </aside>
+  </div>
+</template>
+
+<style scoped>
+/* ── Page layout ── */
+.diffusion-page {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  overflow: hidden;
+}
+
+/* ── Preview column ── */
+.preview-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+.canvas-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 16px 48px rgba(0,0,0,0.6);
+  align-self: center;
+  width: 100%;
+}
+
+.canvas { width: 100%; height: 100%; display: block; }
+.canvas.edit-cursor { cursor: crosshair; }
+
+/* ── Fullscreen ── */
+.canvas-shell.is-fullscreen {
+  background: #000;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.canvas-shell.is-fullscreen .canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.fullscreen-btn {
+  position: absolute; top: 10px; right: 10px;
+  width: 32px; height: 32px; border-radius: var(--r-sm);
+  background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.7);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+  z-index: 10; opacity: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.canvas-shell:hover .fullscreen-btn,
+.canvas-shell.is-fullscreen .fullscreen-btn { opacity: 1; }
+.fullscreen-btn:hover { background: rgba(0, 0, 0, 0.75); color: #fff; }
+.canvas-shell.is-fullscreen .fullscreen-btn {
+  top: 16px; right: 16px;
+  width: 40px; height: 40px; border-radius: var(--r-md);
+}
+
+.empty-state {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-3); font-size: 13px; pointer-events: none;
+}
+
+.edit-hint {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  padding: 6px 16px; border-radius: var(--r-md);
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(6px);
+  color: var(--text-2); font-size: 12px; pointer-events: none;
+}
+.hint-fade-enter-active, .hint-fade-leave-active { transition: opacity 0.25s; }
+.hint-fade-enter-from, .hint-fade-leave-to { opacity: 0; }
+
+/* ── Point markers ── */
+.point-marker {
+  position: absolute;
+  width: 22px; height: 22px;
+  margin-left: -11px; margin-top: -11px;
+  border-radius: 50%;
+  background: rgba(112, 96, 255, 0.5);
+  border: 2px solid rgba(168, 152, 255, 0.8);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.15s, background 0.15s;
+  z-index: 2;
+  box-shadow: 0 0 8px rgba(112, 96, 255, 0.5);
+}
+.point-marker:hover {
+  transform: scale(1.3);
+  background: rgba(232, 77, 138, 0.6);
+  border-color: rgba(232, 77, 138, 0.9);
+  box-shadow: 0 0 12px rgba(232, 77, 138, 0.6);
+}
+.point-marker-num {
+  font-size: 9px; font-weight: 700; color: #fff;
+  line-height: 1; pointer-events: none;
+}
+
+/* ── Status bar ── */
+.status-bar {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+  font-size: 12px; color: var(--text-3);
+}
+.status-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--surface-3); transition: background 0.3s;
+}
+.status-dot.spreading { background: var(--teal); box-shadow: 0 0 6px var(--teal); animation: pulse 0.8s infinite; }
+.status-dot.pausing   { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.status-text { flex: 1; }
+.export-progress-wrap {
+  width: 80px; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; flex-shrink: 0;
+}
+.export-progress-fill {
+  height: 100%; background: linear-gradient(to right, var(--accent), #a898ff);
+  border-radius: 2px; transition: width 0.1s;
+}
+
+/* ── Sidebar ── */
+.sidebar { display: flex; flex-direction: column; overflow-y: auto; background: var(--surface); }
+.sidebar-block { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.controls-block { flex-shrink: 0; }
+
+.block-header {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
+  color: var(--text-3); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+.block-header span { color: var(--text-3); }
+.block-badge {
+  margin-left: auto;
+  background: var(--accent-dim); color: var(--accent);
+  font-size: 10px; font-weight: 700; padding: 1px 6px;
+  border-radius: 10px; letter-spacing: 0; text-transform: none;
+}
+
+/* ── Image tabs ── */
+.image-tabs {
+  display: flex; gap: 4px; overflow-x: auto; padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+.image-tab {
+  position: relative; flex-shrink: 0;
+  width: 56px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px; border-radius: var(--r-sm);
+  border: 1.5px solid transparent; background: var(--surface-2);
+  cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.image-tab:hover { background: var(--surface-3); }
+.image-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.tab-thumb {
+  width: 40px; height: 28px; border-radius: 3px;
+  object-fit: cover; display: block;
+}
+.tab-idx {
+  font-size: 9px; font-weight: 700; color: var(--text-3);
+}
+.tab-pts {
+  font-size: 8px; color: var(--text-4);
+}
+
+/* ── Point actions ── */
+.point-actions {
+  display: flex; gap: 6px; margin-bottom: 8px;
+}
+.edit-toggle {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 7px; border-radius: var(--r-sm);
+  font-size: 11.5px; font-weight: 500;
+  color: var(--text-3); background: var(--surface-2); border: 1.5px solid transparent;
+  cursor: pointer; transition: all 0.15s;
+}
+.edit-toggle:hover { background: var(--surface-3); color: var(--text-2); }
+.edit-toggle.active {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.edit-toggle:disabled { opacity: 0.4; cursor: default; }
+
+.clear-btn {
+  padding: 7px 12px; border-radius: var(--r-sm);
+  font-size: 11.5px; font-weight: 500;
+  color: var(--text-4); background: var(--surface-2);
+  cursor: pointer; transition: all 0.15s;
+}
+.clear-btn:hover { color: #e84d8a; background: rgba(232, 77, 138, 0.1); }
+.clear-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Point list ── */
+.point-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 120px; overflow-y: auto;
+}
+.point-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; border-radius: var(--r-xs);
+  transition: background 0.1s;
+}
+.point-item:hover { background: var(--surface-2); }
+.point-num {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--accent-dim); color: var(--accent);
+  font-size: 9px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.point-coord {
+  flex: 1; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.point-del {
+  width: 16px; height: 16px; border-radius: 3px;
+  background: transparent; color: var(--text-4);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s; flex-shrink: 0;
+}
+.point-del:hover { background: rgba(220,50,80,0.15); color: #e84d8a; }
+.point-del:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Playback buttons ── */
+.playback-btns { display: flex; gap: 8px; }
+.btn-play {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 10px; border-radius: var(--r-md);
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  box-shadow: 0 4px 16px rgba(112,96,255,0.25);
+  transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
+}
+.btn-play:hover:not(:disabled) { background: #8070ff; box-shadow: 0 4px 20px rgba(112,96,255,0.4); }
+.btn-play:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+
+.btn-export {
+  display: flex; align-items: center; gap: 6px; padding: 10px 14px;
+  border-radius: var(--r-md); background: var(--surface-3); color: var(--text-2);
+  font-size: 12.5px; font-weight: 500; border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s, opacity 0.15s; white-space: nowrap;
+}
+.btn-export:hover:not(:disabled) { background: var(--surface-4); color: var(--text); }
+.btn-export:disabled { opacity: 0.4; cursor: default; }
+
+.spinner {
+  width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: var(--text-2); border-radius: 50%;
+  animation: spin 0.7s linear infinite; flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Settings sliders ── */
+.setting-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.setting-row:last-child { margin-bottom: 0; }
+.setting-row label { width: 60px; font-size: 11.5px; color: var(--text-3); flex-shrink: 0; }
+.setting-ctl { flex: 1; display: flex; align-items: center; gap: 8px; }
+.setting-ctl input[type='range'] {
+  flex: 1; height: 4px; border-radius: 2px; appearance: none; cursor: pointer; outline: none;
+}
+.setting-ctl input[type='range']::-webkit-slider-thumb {
+  appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px rgba(112,96,255,0.4); cursor: pointer;
+}
+.setting-val { width: 38px; font-size: 11px; color: var(--text-3); text-align: right; flex-shrink: 0; }
+
+/* ── Loop toggle ── */
+.loop-toggle {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; cursor: pointer;
+}
+.loop-toggle input[type='checkbox'] {
+  width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer;
+}
+.loop-label { font-size: 12px; color: var(--text-3); }
+</style>

@@ -33,6 +33,11 @@ const router = createRouter({
       name: 'poster',
       component: () => import('../views/PosterPage.vue'),
     },
+    {
+      path: '/diffusion',
+      name: 'diffusion',
+      component: () => import('../views/DiffusionPage.vue'),
+    },
   ],
 })
 

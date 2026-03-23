@@ -196,3 +196,36 @@ export interface IntroConfig {
   logo: IntroImageLayer
   syncToBeats: boolean    // trigger title animation on first beat
 }
+
+/** 扩散着色 — 扩散点 */
+export interface DiffusionPoint {
+  /** 归一化 X 坐标 (0-1) */
+  x: number
+  /** 归一化 Y 坐标 (0-1) */
+  y: number
+  id: string
+}
+
+/** 扩散着色 — 带扩散点的图片 */
+export interface DiffusionImage {
+  id: string
+  file: File
+  url: string
+  name: string
+  /** 用户放置的扩散点（归一化坐标） */
+  points: DiffusionPoint[]
+}
+
+/** 扩散着色 — 动画配置 */
+export interface DiffusionConfig {
+  /** 扩散完成时长 (ms) */
+  spreadDuration: number
+  /** 图片间停留时间 (ms) */
+  pauseDuration: number
+  /** 是否循环播放 */
+  loop: boolean
+  /** 涟漪边缘柔和宽度 (px) */
+  edgeWidth: number
+  /** 是否开启涟漪光波效果 */
+  rippleEnabled: boolean
+}

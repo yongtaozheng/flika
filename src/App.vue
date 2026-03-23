@@ -8,6 +8,7 @@ const isMusicBall = computed(() => route.path === '/music-ball')
 const isSplice = computed(() => route.path === '/splice')
 const isIntro = computed(() => route.path === '/intro')
 const isPoster = computed(() => route.path === '/poster')
+const isDiffusion = computed(() => route.path === '/diffusion')
 </script>
 
 <template>
@@ -70,6 +71,12 @@ const isPoster = computed(() => route.path === '/poster')
             <path d="M3 9h18M9 21V9"/>
           </svg>
           封面海报
+        </router-link>
+        <router-link to="/diffusion" class="nav-item" :class="{ active: isDiffusion }">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" opacity="0.3"/><circle cx="12" cy="12" r="6" opacity="0.5"/><circle cx="12" cy="12" r="2"/>
+          </svg>
+          扩散着色
         </router-link>
       </nav>
     </header>
