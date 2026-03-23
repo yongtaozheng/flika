@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import type { UploadedImage } from '../types'
 import { isTauri, pickImageFiles } from '../utils/filePicker'
+import { v4 as uuidv4 } from 'uuid';
 
 const props = defineProps<{ images: UploadedImage[] }>()
 
@@ -39,7 +40,7 @@ function processFiles(files: File[]) {
   const imageFiles = files.filter((f) => f.type.startsWith('image/'))
   if (!imageFiles.length) { alert('请选择图片文件'); return }
   emit('add', imageFiles.map((file) => ({
-    id: crypto.randomUUID(), file, url: URL.createObjectURL(file), name: file.name,
+    id: uuidv4(), file, url: URL.createObjectURL(file), name: file.name,
   })))
 }
 

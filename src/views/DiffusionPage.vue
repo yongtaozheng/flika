@@ -4,6 +4,7 @@ import type { UploadedImage, DiffusionImage, DiffusionConfig } from '../types'
 import { useDiffusionEngine } from '../composables/useDiffusionEngine'
 import { saveVideoFile } from '../utils/filePicker'
 import ImageUploader from '../components/ImageUploader.vue'
+import { v4 as uuidv4 } from 'uuid';
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -105,7 +106,7 @@ function handleCanvasClick(e: MouseEvent) {
   const img = images.value[selectedImageIndex.value]
   if (!img) return
 
-  img.points.push({ id: crypto.randomUUID(), x: nx, y: ny })
+  img.points.push({ id: uuidv4(), x: nx, y: ny })
   engine.precomputeImage(img)
   engine.renderStaticFrame(selectedImageIndex.value)
 }

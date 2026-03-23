@@ -9,6 +9,7 @@ import {
   type DrawTransitionType,
 } from '../composables/useTransitions'
 import { saveVideoFile } from '../utils/filePicker'
+import { v4 as uuidv4 } from 'uuid';
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -173,7 +174,7 @@ function processFiles(files: File[]) {
   if (!valid.length) { alert('请选择图片或视频文件'); return }
 
   const newItems: SpliceItem[] = valid.map((file) => ({
-    id: crypto.randomUUID(), file, url: URL.createObjectURL(file),
+    id: uuidv4(), file, url: URL.createObjectURL(file),
     name: file.name, type: file.type.startsWith('video/') ? 'video' : 'image',
     holdDuration: defaultHold.value,
   }))
