@@ -2,6 +2,8 @@
 
 Flika 是一款基于 Vue 3 + TypeScript 的音乐可视化动画创作工具，支持 Web 和桌面端（Tauri），让你轻松将图片、视频与音乐节拍结合，创作出令人惊艳的动态视觉作品。
 
+> 在线体验：[http://jyeontu.xyz/flika](http://jyeontu.xyz/flika)
+
 ---
 
 ## 功能展示
