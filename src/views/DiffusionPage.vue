@@ -5,6 +5,7 @@ import { useDiffusionEngine } from '../composables/useDiffusionEngine'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { useBeatDetector } from '../composables/useBeatDetector'
 import { saveVideoFile } from '../utils/filePicker'
+import { canvasBg } from '../composables/useTheme'
 import ImageUploader from '../components/ImageUploader.vue'
 import AudioUploader from '../components/AudioUploader.vue'
 import { v4 as uuidv4 } from 'uuid';
@@ -79,7 +80,7 @@ let playStartMs = 0
 // ── Canvas helpers ──────────────────────────────────────────────────────────
 function clearCanvas() {
   const c = canvasRef.value?.getContext('2d')
-  if (c) { c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH) }
+  if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) }
 }
 
 // ── Image management ────────────────────────────────────────────────────────
@@ -757,11 +758,11 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   aspect-ratio: 16 / 9;
-  background: #000;
+  background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 16px 48px rgba(0,0,0,0.6);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.3);
   align-self: center;
   width: 100%;
 }
@@ -771,7 +772,7 @@ onUnmounted(() => {
 
 /* ── Fullscreen ── */
 .canvas-shell.is-fullscreen {
-  background: #000;
+  background: var(--canvas-bg);
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -797,7 +798,7 @@ onUnmounted(() => {
 }
 .canvas-shell:hover .fullscreen-btn,
 .canvas-shell.is-fullscreen .fullscreen-btn { opacity: 1; }
-.fullscreen-btn:hover { background: rgba(0, 0, 0, 0.75); color: #fff; }
+.fullscreen-btn:hover { background: rgba(0, 0, 0, 0.75); color: var(--on-accent); }
 .canvas-shell.is-fullscreen .fullscreen-btn {
   top: 16px; right: 16px;
   width: 40px; height: 40px; border-radius: var(--r-md);
@@ -863,7 +864,7 @@ onUnmounted(() => {
   width: 80px; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; flex-shrink: 0;
 }
 .export-progress-fill {
-  height: 100%; background: linear-gradient(to right, var(--accent), #a898ff);
+  height: 100%; background: linear-gradient(to right, var(--accent), var(--accent-light));
   border-radius: 2px; transition: width 0.1s;
 }
 
@@ -985,7 +986,7 @@ onUnmounted(() => {
 .btn-play {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 10px; border-radius: var(--r-md);
-  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600;
   box-shadow: 0 4px 16px rgba(112,96,255,0.25);
   transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
 }
@@ -1016,7 +1017,7 @@ onUnmounted(() => {
 .btn-cancel-export:hover .cancel-hint { opacity: 1; }
 
 .spinner {
-  width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.2);
+  width: 13px; height: 13px; border: 2px solid var(--border-hover);
   border-top-color: var(--text-2); border-radius: 50%;
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
@@ -1126,7 +1127,7 @@ onUnmounted(() => {
   font-size: 11px; color: var(--text-3);
 }
 .spinner-sm {
-  width: 11px; height: 11px; border: 1.5px solid rgba(255,255,255,0.15);
+  width: 11px; height: 11px; border: 1.5px solid var(--border);
   border-top-color: var(--teal); border-radius: 50%;
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }

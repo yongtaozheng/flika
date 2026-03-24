@@ -724,7 +724,7 @@ function formatTime(t: number) {
 .canvas-shell {
   flex: 1;
   min-height: 0;
-  background: #000;
+  background: var(--canvas-bg);
   border-radius: var(--r-md, 8px);
   border: 1px solid var(--border);
   box-shadow: 0 4px 24px rgba(0,0,0,0.4);
@@ -755,7 +755,7 @@ function formatTime(t: number) {
   border-radius: 50%;
   background: var(--accent-dim, rgba(168,152,255,0.15));
   border: 1px solid rgba(168,152,255,0.3);
-  color: #a898ff;
+  color: var(--accent-light);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -789,7 +789,7 @@ function formatTime(t: number) {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #a898ff;
+  background: var(--accent-light);
   cursor: pointer;
 }
 
@@ -800,7 +800,7 @@ function formatTime(t: number) {
   padding: 6px 14px;
   border-radius: var(--r-sm, 6px);
   background: var(--pink, #ff5fa0);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 12.5px;
   font-weight: 600;
   border: none;
@@ -919,7 +919,7 @@ function formatTime(t: number) {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #a898ff;
+  background: var(--accent-light);
   cursor: pointer;
 }
 
@@ -1051,7 +1051,7 @@ function formatTime(t: number) {
 }
 .bg-type-btn:hover { color: var(--text-2, #bbb); background: var(--surface-3, #2a2a3a); }
 .bg-type-btn.active {
-  color: #a898ff;
+  color: var(--accent-light);
   background: var(--accent-dim, rgba(168,152,255,0.12));
   border-color: rgba(168,152,255,0.35);
 }

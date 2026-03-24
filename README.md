@@ -1,5 +1,81 @@
-# Vue 3 + TypeScript + Vite
+# Flika — 音乐可视化动画创作工具
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Flika 是一款基于 Vue 3 + TypeScript 的音乐可视化动画创作工具，支持 Web 和桌面端（Tauri），让你轻松将图片、视频与音乐节拍结合，创作出令人惊艳的动态视觉作品。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+---
+
+## 功能展示
+
+### 胶片放映
+
+复古胶片风格动画，支持多列胶片同步滚动，配合音乐节拍触发闪烁、胶片颗粒、划痕等效果，还原经典胶片放映机质感。
+
+- 1 / 2 / 3 列布局自由切换
+- 每列可独立配置图片或视频
+- 胶片颗粒噪点、划痕、节拍闪烁、复古色调等可选效果
+- 支持音乐同步，节拍驱动滚动加速
+- 导出 WebM 视频
+
+### 视频开场
+
+制作专业级视频开场动画，支持标题、副标题、Logo 三层元素独立动画编排。
+
+- 多种入场动画：淡入、上滑、缩放、打字机、故障风、镂空揭幕等
+- 背景支持纯色渐变、图片、视频三种模式
+- 每层元素可独立调节位置、延迟、时长
+- 音频节拍同步：标题自动对齐第一个节拍
+- 导出 WebM 视频
+
+### 封面海报
+
+将图片与音乐结合，生成带有动态效果的封面海报动画。
+
+- 多种视觉效果叠加
+- 音乐节拍驱动动画节奏
+- 导出视频分享
+
+### 扩散着色
+
+独特的图像扩散着色效果，从中心向外扩散上色，配合音乐节奏呈现渐进式视觉体验。
+
+- 多种扩散过渡动画
+- 支持自定义扩散参数
+- 音乐同步着色节奏
+- 导出视频
+
+### 踩点动画
+
+经典音乐踩点视频制作，根据音乐节拍自动切换图片并叠加丰富的视觉特效。
+
+- 18 种特效：缩放、旋转、抖动、闪白、模糊、滑动、弹跳、故障、翻转、像素化、反色、漩涡、色散、波浪、分裂、霓虹、心跳等
+- 智能节拍检测，自动分析音乐节奏
+- 多特效自由组合叠加
+- 导出 MP4 / WebM 视频
+
+### 涟漪拼接
+
+以涟漪波纹形式进行图片间的过渡拼接，水波纹从中心扩散，带来流畅的视觉切换体验。
+
+- 涟漪波纹过渡动画
+- 自定义波纹参数
+- 音乐同步切换
+- 导出视频
+
+---
+
+## 通用特性
+
+- 明暗主题切换，支持跟随系统偏好
+- Web 端与 Tauri 桌面端双平台支持
+- 拖拽上传音频、图片、视频素材
+- 实时预览，所见即所得
+
+---
+
+## 交流
+
+欢迎加入微信交流群，一起探讨前端可视化与创意开发：
+
+<img src="http://jyeontu.xyz:3003/viewImage/qrcode.png" width="200" alt="微信交流群" />
+
+关注微信公众号获取更多前端创意内容：**前端也能这么有趣**

@@ -16,6 +16,7 @@ import {
   type ResolvedSlot,
 } from '../utils/diffusionRenderer'
 import { createWorkerExport, type WorkerExportHandle } from './useDiffusionWorkerExport'
+import { canvasBg } from './useTheme'
 
 /* ── Pre-computed data per image (internal, with DOM refs stripped) ──── */
 interface PrecomputedData {
@@ -36,7 +37,7 @@ function drawCover(
   cw: number,
   ch: number,
 ) {
-  ctx.fillStyle = '#000'
+  ctx.fillStyle = canvasBg.value
   ctx.fillRect(0, 0, cw, ch)
   const sw = el.naturalWidth
   const sh = el.naturalHeight
@@ -152,7 +153,7 @@ export function useDiffusionEngine(
     if (!ctx) return
     const images = imagesRef.value
     if (index < 0 || index >= images.length) {
-      ctx.fillStyle = '#000'
+      ctx.fillStyle = canvasBg.value
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       return
     }
@@ -231,7 +232,7 @@ export function useDiffusionEngine(
     const images = imagesRef.value
     const cfg = configRef.value
     if (images.length === 0) {
-      ctx.fillStyle = '#000'
+      ctx.fillStyle = canvasBg.value
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       return
     }
@@ -251,7 +252,7 @@ export function useDiffusionEngine(
     const image = images[imageIndex]
     const data = precomputed.get(image.id)
     if (!data) {
-      ctx.fillStyle = '#000'
+      ctx.fillStyle = canvasBg.value
       ctx.fillRect(0, 0, width, height)
       return
     }
@@ -322,7 +323,7 @@ export function useDiffusionEngine(
       }
     }
 
-    ctx.fillStyle = '#000'
+    ctx.fillStyle = canvasBg.value
     ctx.fillRect(0, 0, width, height)
     ctx.putImageData(output, 0, 0)
 

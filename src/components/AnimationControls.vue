@@ -262,7 +262,7 @@ function sliderFill(value: number, min: number, max: number) {
 
 .seekbar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent) 0%, #a898ff 100%);
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-light) 100%);
   border-radius: 3px;
   pointer-events: none;
 }
@@ -274,7 +274,7 @@ function sliderFill(value: number, min: number, max: number) {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--on-accent);
   box-shadow: 0 0 0 2px var(--accent);
   transition: transform 0.12s;
   pointer-events: none;
@@ -309,7 +309,7 @@ function sliderFill(value: number, min: number, max: number) {
 
 .analyze-fill {
   height: 3px;
-  background: linear-gradient(90deg, var(--accent), #a898ff);
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
   border-radius: 2px;
   transition: width 0.3s;
 }
@@ -351,7 +351,7 @@ function sliderFill(value: number, min: number, max: number) {
   height: 50px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -410,7 +410,7 @@ function sliderFill(value: number, min: number, max: number) {
 
 .fx-btn:hover { border-color: var(--border-hover); color: var(--text-2); background: var(--surface-3); }
 
-.fx-btn.active.cat-motion     { background: var(--accent-dim);  border-color: rgba(112,96,255,0.38); color: #a898ff; }
+.fx-btn.active.cat-motion     { background: var(--accent-dim);  border-color: rgba(112,96,255,0.38); color: var(--accent-light); }
 .fx-btn.active.cat-transition { background: var(--teal-dim);    border-color: rgba(29,201,158,0.32); color: var(--teal); }
 .fx-btn.active.cat-distort    { background: var(--purple-dim);  border-color: rgba(168,85,247,0.32); color: var(--purple); }
 .fx-btn.active.cat-color      { background: var(--amber-dim);   border-color: rgba(255,139,61,0.32); color: var(--amber); }
@@ -431,8 +431,8 @@ function sliderFill(value: number, min: number, max: number) {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.legend-item.motion     { color: #a898ff; }
-.legend-item.motion::before     { background: #a898ff; }
+.legend-item.motion     { color: var(--accent-light); }
+.legend-item.motion::before     { background: var(--accent-light); }
 .legend-item.transition { color: var(--teal); }
 .legend-item.transition::before { background: var(--teal); }
 .legend-item.distort    { color: var(--purple); }
@@ -474,8 +474,8 @@ function sliderFill(value: number, min: number, max: number) {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0,0,0,0.5);
+  background: var(--on-accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 2px 6px rgba(0,0,0,0.3);
   cursor: pointer;
   transition: transform 0.12s;
 }
@@ -484,7 +484,7 @@ function sliderFill(value: number, min: number, max: number) {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--on-accent);
   border: 2px solid var(--accent);
   cursor: pointer;
 }

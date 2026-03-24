@@ -199,7 +199,7 @@ const ext = computed(() => fileName.value.split('.').pop()?.toUpperCase() ?? '')
 }
 
 .drop-zone:hover .drop-icon,
-.drop-zone.dragging .drop-icon { color: #a898ff; }
+.drop-zone.dragging .drop-icon { color: var(--accent-light); }
 
 .drop-label {
   font-size: 13.5px;

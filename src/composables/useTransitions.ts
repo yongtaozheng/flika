@@ -3,6 +3,8 @@
 // All functions: (ctx, from, to, progress 0→1) => void
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { canvasBg } from './useTheme'
+
 export type DrawTransitionType =
   | 'pushLeft' | 'pushRight' | 'pushUp' | 'pushDown'
   | 'zoom' | 'cardFlip' | 'pageFlip'
@@ -99,7 +101,7 @@ export function useTransitions() {
   const pushLeft: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
     const e = ease(t)
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     drawAt(ctx, from, -w * e, 0)
     drawAt(ctx, to,   w * (1 - e), 0)
   }
@@ -107,7 +109,7 @@ export function useTransitions() {
   const pushRight: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
     const e = ease(t)
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     drawAt(ctx, from, w * e, 0)
     drawAt(ctx, to,  -w * (1 - e), 0)
   }
@@ -115,7 +117,7 @@ export function useTransitions() {
   const pushUp: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
     const e = ease(t)
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     drawAt(ctx, from, 0, -h * e)
     drawAt(ctx, to,   0,  h * (1 - e))
   }
@@ -123,7 +125,7 @@ export function useTransitions() {
   const pushDown: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
     const e = ease(t)
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     drawAt(ctx, from, 0,  h * e)
     drawAt(ctx, to,   0, -h * (1 - e))
   }
@@ -134,7 +136,7 @@ export function useTransitions() {
   const zoom: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
     const cx = w / 2, cy = h / 2
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     ctx.save()
     ctx.translate(cx, cy)
     let scale: number
@@ -155,7 +157,7 @@ export function useTransitions() {
   // ── 6  Card flip (horizontal X-axis compression) ──────────────────────────
   const cardFlip: DrawTransitionFn = (ctx, from, to, t) => {
     const { width: w, height: h } = ctx.canvas
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h)
+    ctx.fillStyle = canvasBg.value; ctx.fillRect(0, 0, w, h)
     const half = t < 0.5
     const localT = half ? ease(t * 2) : ease((t - 0.5) * 2)
     const scaleX = half ? 1 - localT : localT

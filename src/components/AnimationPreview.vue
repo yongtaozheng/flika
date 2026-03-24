@@ -141,13 +141,11 @@ defineExpose({ canvasRef, reset, exportVideo })
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  background: #000;
+  background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,0.03),
-    0 16px 48px rgba(0,0,0,0.6);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.3);
 }
 
 .canvas {
@@ -215,7 +213,7 @@ defineExpose({ canvasRef, reset, exportVideo })
   position: absolute;
   bottom: 0;
   width: 2px;
-  background: linear-gradient(to top, var(--accent), #a898ff);
+  background: linear-gradient(to top, var(--accent), var(--accent-light));
   border-radius: 1px;
   transform: translateX(-50%);
 }

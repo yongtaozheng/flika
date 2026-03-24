@@ -211,7 +211,7 @@ function onSortDragEnd() { dragIndex.value = null; dragOverIndex.value = null }
 .add-tile:hover {
   border-color: var(--border-hover);
   color: var(--text-3);
-  background: rgba(255,255,255,0.03);
+  background: var(--hover-bg);
 }
 
 /* ── Drop zone ── */
@@ -240,7 +240,7 @@ function onSortDragEnd() { dragIndex.value = null; dragOverIndex.value = null }
 
 .drop-icon { color: var(--text-3); margin-bottom: 2px; transition: color 0.2s; }
 .drop-zone:hover .drop-icon,
-.drop-zone.dragging .drop-icon { color: #a898ff; }
+.drop-zone.dragging .drop-icon { color: var(--accent-light); }
 
 .drop-label { font-size: 13.5px; font-weight: 500; color: var(--text-2); }
 .drop-hint { font-size: 11.5px; color: var(--text-3); }

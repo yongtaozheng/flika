@@ -7,6 +7,14 @@
     <title>Flika</title>
   </head>
   <body>
+    <script>
+      (function(){
+        var t=localStorage.getItem('flika-theme')||
+          (matchMedia('(prefers-color-scheme:light)').matches?'light':'dark');
+        document.documentElement.setAttribute('data-theme',t);
+        document.documentElement.style.colorScheme=t;
+      })();
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

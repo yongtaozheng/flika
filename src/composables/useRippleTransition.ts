@@ -1,4 +1,5 @@
 import type { RippleConfig } from '../types'
+import { canvasBg } from './useTheme'
 
 export interface RippleCenter {
   x: number
@@ -112,7 +113,7 @@ export function useRippleTransition() {
     off.width = width
     off.height = height
     const c = off.getContext('2d')!
-    c.fillStyle = '#000'
+    c.fillStyle = canvasBg.value
     c.fillRect(0, 0, width, height)
     const sw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth
     const sh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight

@@ -755,7 +755,7 @@ async function handleExport(format: 'png' | 'jpeg') {
 .canvas-shell {
   max-width: 100%;
   max-height: 100%;
-  background: #000;
+  background: var(--canvas-bg);
   border-radius: var(--r-md, 8px);
   border: 1px solid var(--border);
   box-shadow: 0 4px 28px rgba(0,0,0,0.5);
@@ -788,7 +788,7 @@ async function handleExport(format: 'png' | 'jpeg') {
   cursor: pointer;
   transition: opacity 0.15s;
 }
-.export-btn.png { background: var(--accent, #a898ff); color: #fff; }
+.export-btn.png { background: var(--accent, #a898ff); color: var(--on-accent); }
 .export-btn.jpg { background: var(--teal, #40d9c0); color: #111; }
 .export-btn:hover:not(:disabled) { opacity: 0.85; }
 .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -856,7 +856,7 @@ async function handleExport(format: 'png' | 'jpeg') {
 }
 .ratio-btn:hover { color: var(--text-2, #bbb); background: var(--surface-3, #2a2a3a); }
 .ratio-btn.active {
-  color: #a898ff;
+  color: var(--accent-light);
   background: var(--accent-dim, rgba(168,152,255,0.12));
   border-color: rgba(168,152,255,0.35);
 }
@@ -880,7 +880,7 @@ async function handleExport(format: 'png' | 'jpeg') {
 }
 .bg-type-btn:hover { color: var(--text-2, #bbb); background: var(--surface-3, #2a2a3a); }
 .bg-type-btn.active {
-  color: #a898ff;
+  color: var(--accent-light);
   background: var(--accent-dim, rgba(168,152,255,0.12));
   border-color: rgba(168,152,255,0.35);
 }
@@ -967,7 +967,7 @@ async function handleExport(format: 'png' | 'jpeg') {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #a898ff;
+  background: var(--accent-light);
   cursor: pointer;
 }
 

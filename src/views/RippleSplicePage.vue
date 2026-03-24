@@ -9,6 +9,7 @@ import {
   type DrawTransitionType,
 } from '../composables/useTransitions'
 import { saveVideoFile } from '../utils/filePicker'
+import { canvasBg } from '../composables/useTheme'
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ const { renderRippleFrame, randomCenter, captureMediaData } = useRippleTransitio
 function getCtx() { return canvasRef.value?.getContext('2d') ?? null }
 
 function drawCover(c: CanvasRenderingContext2D, el: HTMLImageElement | HTMLVideoElement) {
-  c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH)
+  c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH)
   const sw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth
   const sh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight
   if (!sw || !sh) return
@@ -158,7 +159,7 @@ function play() {
 function stop() {
   stopLoop(); isPlaying.value = false; playState.value = 'idle'; currentIndex.value = 0
   if (items.value.length > 0) drawItem(0)
-  else { const c = getCtx(); if (c) { c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH) } }
+  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) } }
 }
 
 // ── File input ────────────────────────────────────────────────────────────────
@@ -205,7 +206,7 @@ function removeItem(id: string) {
   if (item) { URL.revokeObjectURL(item.url); mediaMap.delete(id) }
   items.value = items.value.filter((i) => i.id !== id)
   if (items.value.length > 0) drawItem(0)
-  else { const c = getCtx(); if (c) { c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH) } }
+  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) } }
 }
 
 // ── Drag sort ─────────────────────────────────────────────────────────────────
@@ -329,7 +330,7 @@ onMounted(() => {
   if (canvasRef.value) {
     canvasRef.value.width = CW; canvasRef.value.height = CH
     const c = canvasRef.value.getContext('2d')!
-    c.fillStyle = '#000'; c.fillRect(0, 0, CW, CH)
+    c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH)
   }
 })
 
@@ -601,11 +602,11 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
   flex: 1;
   min-height: 0;
   aspect-ratio: 16 / 9;
-  background: #000;
+  background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
-  box-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 16px 48px rgba(0,0,0,0.6);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
   align-self: center;
   width: 100%;
 }
@@ -626,7 +627,7 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
 }
 .finished-replay {
   padding: 8px 20px; border-radius: var(--r-sm);
-  background: var(--accent-dim); color: #a898ff; font-size: 13px; font-weight: 500;
+  background: var(--accent-dim); color: var(--accent-light); font-size: 13px; font-weight: 500;
   transition: background 0.15s;
 }
 .finished-replay:hover { background: rgba(112,96,255,0.18); }
@@ -652,7 +653,7 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
   width: 80px; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; flex-shrink: 0;
 }
 .export-progress-fill {
-  height: 100%; background: linear-gradient(to right, var(--accent), #a898ff);
+  height: 100%; background: linear-gradient(to right, var(--accent), var(--accent-light));
   border-radius: 2px; transition: width 0.1s;
 }
 
@@ -681,7 +682,7 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
   color: var(--text-3); font-size: 12.5px; font-weight: 500;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
-.add-btn:hover { border-color: var(--accent); color: #a898ff; background: var(--accent-dim); }
+.add-btn:hover { border-color: var(--accent); color: var(--accent-light); background: var(--accent-dim); }
 
 /* ── Item list ── */
 .item-list {
@@ -732,7 +733,7 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
 .btn-play {
   flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 10px; border-radius: var(--r-md);
-  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600;
   box-shadow: 0 4px 16px rgba(112,96,255,0.25);
   transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
 }
@@ -749,7 +750,7 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
 .btn-export:disabled { opacity: 0.4; cursor: default; }
 
 .spinner {
-  width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.2);
+  width: 13px; height: 13px; border: 2px solid var(--border-hover);
   border-top-color: var(--text-2); border-radius: 50%;
   animation: spin 0.7s linear infinite; flex-shrink: 0;
 }
