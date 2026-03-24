@@ -6,6 +6,10 @@ interface PrecomputedData {
   originalData: Uint8ClampedArray
   grayscaleData: Uint8ClampedArray
   distanceField: Float32Array
+  /** Pre-computed cos(angle) for radial wave displacement — avoids trig in hot loop */
+  cosAngle: Float32Array
+  /** Pre-computed sin(angle) for radial wave displacement */
+  sinAngle: Float32Array
   maxDist: number
   width: number
   height: number
@@ -41,8 +45,10 @@ function computeDistanceField(
   width: number,
   height: number,
   points: { x: number; y: number }[],
-): { field: Float32Array; maxDist: number } {
+): { field: Float32Array; cosAngle: Float32Array; sinAngle: Float32Array; maxDist: number } {
   const field = new Float32Array(width * height)
+  const cosAngle = new Float32Array(width * height)
+  const sinAngle = new Float32Array(width * height)
   let maxDist = 0
 
   const pxPoints = points.map((p) => ({ x: p.x * width, y: p.y * height }))
@@ -50,19 +56,29 @@ function computeDistanceField(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       let minDist = Infinity
+      let nearDx = 0
+      let nearDy = 0
       for (const pt of pxPoints) {
         const dx = x - pt.x
         const dy = y - pt.y
         const dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < minDist) minDist = dist
+        if (dist < minDist) {
+          minDist = dist
+          nearDx = dx
+          nearDy = dy
+        }
       }
       const idx = y * width + x
       field[idx] = minDist
+      // Pre-compute trig so the render hot-loop only does array lookups
+      const angle = Math.atan2(nearDy, nearDx)
+      cosAngle[idx] = Math.cos(angle)
+      sinAngle[idx] = Math.sin(angle)
       if (minDist > maxDist) maxDist = minDist
     }
   }
 
-  return { field, maxDist }
+  return { field, cosAngle, sinAngle, maxDist }
 }
 
 /* ── Draw image with cover mode ──────────────────────────────────────────── */
@@ -144,14 +160,20 @@ export function useDiffusionEngine(
     const grayscaleData = toGrayscale(originalData)
 
     let distanceField: Float32Array
+    let cosAngle: Float32Array
+    let sinAngle: Float32Array
     let maxDist: number
 
     if (image.points.length > 0) {
       const result = computeDistanceField(CW, CH, image.points)
       distanceField = result.field
+      cosAngle = result.cosAngle
+      sinAngle = result.sinAngle
       maxDist = result.maxDist
     } else {
       distanceField = new Float32Array(CW * CH).fill(Infinity)
+      cosAngle = new Float32Array(CW * CH)
+      sinAngle = new Float32Array(CW * CH)
       maxDist = Infinity
     }
 
@@ -159,6 +181,8 @@ export function useDiffusionEngine(
       originalData,
       grayscaleData,
       distanceField,
+      cosAngle,
+      sinAngle,
       maxDist,
       width: CW,
       height: CH,
@@ -291,7 +315,11 @@ export function useDiffusionEngine(
   }
 
   /* ── Core render frame at given elapsed time (ms) ────────────────────── */
-  function renderFrame(elapsedMs: number): void {
+  /**
+   * @param step  Pixel sampling step (1 = full quality, 2 = 4× faster for export).
+   *              step > 1 fills step×step blocks from a single sample.
+   */
+  function renderFrame(elapsedMs: number, step: number = 1): void {
     const canvas = canvasRef.value
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -330,90 +358,103 @@ export function useDiffusionEngine(
     const currentRadius = spreadProgress * data.maxDist
     const edgeWidth = cfg.edgeWidth
 
-    // Ripple wave parameters
-    const RIPPLE_COUNT = 3          // number of trailing ripple rings
-    const RIPPLE_SPACING = 40       // px between rings
-    const RIPPLE_WIDTH = 6          // width of each ripple band (px)
-    const RIPPLE_BRIGHTNESS = 0.45  // max brightness boost at wavefront
+    // Wave ripple parameters (sinusoidal radial displacement — inspired by water ripple)
+    const WAVE_COUNT = 3           // number of simultaneous wave rings
+    const WAVE_WIDTH = 60          // pixel width of each wave cycle
+    const WAVE_AMPLITUDE = 18      // max radial pixel displacement
+    const WAVE_ZONE = WAVE_WIDTH * WAVE_COUNT  // total affected zone behind wavefront
 
     const output = ctx.createImageData(width, height)
     const outData = output.data
-    const { originalData, grayscaleData, distanceField } = data
-    const pixelCount = width * height
+    const { originalData, grayscaleData, distanceField, cosAngle, sinAngle } = data
+    const rippleActive = cfg.rippleEnabled && spreadProgress > 0 && spreadProgress < 1
+    // Smooth fade at animation boundaries so ripple doesn't pop in/out
+    const animFade = rippleActive ? Math.sin(spreadProgress * Math.PI) : 0
 
-    for (let i = 0; i < pixelCount; i++) {
-      const dist = distanceField[i]
-      const px = i * 4
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const idx = y * width + x
+        const dist = distanceField[idx]
 
-      let r: number, g: number, b: number
+        // ── Wave displacement ──────────────────────────────────────────
+        let srcX = x
+        let srcY = y
 
-      if (dist <= currentRadius - edgeWidth) {
-        // Fully colored
-        r = originalData[px]
-        g = originalData[px + 1]
-        b = originalData[px + 2]
-      } else if (dist <= currentRadius) {
-        // Transition zone
-        const t = smoothstep((currentRadius - dist) / edgeWidth)
-        r = grayscaleData[px] + (originalData[px] - grayscaleData[px]) * t
-        g = grayscaleData[px + 1] + (originalData[px + 1] - grayscaleData[px + 1]) * t
-        b = grayscaleData[px + 2] + (originalData[px + 2] - grayscaleData[px + 2]) * t
-      } else {
-        // Fully grayscale
-        r = grayscaleData[px]
-        g = grayscaleData[px + 1]
-        b = grayscaleData[px + 2]
-      }
+        if (rippleActive) {
+          const relDist = currentRadius - dist  // positive = inside wavefront
+          if (relDist > 0 && relDist < WAVE_ZONE) {
+            // Sinusoidal phase creates concentric wave rings
+            const wavePhase = (relDist / WAVE_WIDTH) * Math.PI * 2
+            // Exponential decay: waves fade as they get further from the front
+            const amplitude = WAVE_AMPLITUDE
+              * Math.sin(wavePhase)
+              * Math.exp(-relDist / WAVE_ZONE * 2)
+              * animFade
 
-      // Ripple wave brightness boost — concentric rings trailing behind wavefront
-      if (cfg.rippleEnabled && spreadProgress > 0 && spreadProgress < 1) {
-        let rippleBoost = 0
-        for (let w = 0; w < RIPPLE_COUNT; w++) {
-          const ringRadius = currentRadius - w * RIPPLE_SPACING
-          if (ringRadius <= 0) break
-          const d = Math.abs(dist - ringRadius)
-          if (d < RIPPLE_WIDTH) {
-            // Gaussian-like falloff within the ring band
-            const intensity = Math.cos((d / RIPPLE_WIDTH) * Math.PI * 0.5)
-            // Outer rings fade out, all rings fade near start/end of animation
-            const ringFade = (1 - w / RIPPLE_COUNT) * Math.sin(spreadProgress * Math.PI)
-            rippleBoost = Math.max(rippleBoost, intensity * ringFade * RIPPLE_BRIGHTNESS)
+            // Push pixel radially — use pre-computed cos/sin (no trig here)
+            srcX = x + cosAngle[idx] * amplitude
+            srcY = y + sinAngle[idx] * amplitude
           }
         }
-        if (rippleBoost > 0) {
-          // Additive light tint (slight blue-white for water ripple feel)
-          r = Math.min(255, r + 200 * rippleBoost)
-          g = Math.min(255, g + 220 * rippleBoost)
-          b = Math.min(255, b + 255 * rippleBoost)
+
+        // Clamp to canvas bounds
+        srcX = Math.max(0, Math.min(width - 1, Math.round(srcX)))
+        srcY = Math.max(0, Math.min(height - 1, Math.round(srcY)))
+        const srcPx = (srcY * width + srcX) * 4
+
+        // ── Color / grayscale blending (based on original dist, not displaced) ─
+        let r: number, g: number, b: number
+        const a: number = originalData[srcPx + 3]
+
+        if (dist <= currentRadius - edgeWidth) {
+          r = originalData[srcPx]
+          g = originalData[srcPx + 1]
+          b = originalData[srcPx + 2]
+        } else if (dist <= currentRadius) {
+          const t = smoothstep((currentRadius - dist) / edgeWidth)
+          r = grayscaleData[srcPx] + (originalData[srcPx] - grayscaleData[srcPx]) * t
+          g = grayscaleData[srcPx + 1] + (originalData[srcPx + 1] - grayscaleData[srcPx + 1]) * t
+          b = grayscaleData[srcPx + 2] + (originalData[srcPx + 2] - grayscaleData[srcPx + 2]) * t
+        } else {
+          r = grayscaleData[srcPx]
+          g = grayscaleData[srcPx + 1]
+          b = grayscaleData[srcPx + 2]
+        }
+
+        // Fill step × step block (step=1 writes single pixel, step=2 fills 2×2 etc.)
+        for (let dy2 = 0; dy2 < step && y + dy2 < height; dy2++) {
+          for (let dx2 = 0; dx2 < step && x + dx2 < width; dx2++) {
+            const outPx = ((y + dy2) * width + (x + dx2)) * 4
+            outData[outPx] = r
+            outData[outPx + 1] = g
+            outData[outPx + 2] = b
+            outData[outPx + 3] = a
+          }
         }
       }
-
-      outData[px] = r
-      outData[px + 1] = g
-      outData[px + 2] = b
-      outData[px + 3] = originalData[px + 3]
     }
 
+    // Clear canvas to black first so alpha transparency is visible
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, width, height)
     ctx.putImageData(output, 0, 0)
 
-    // Draw glowing ripple arcs from each diffusion point (canvas overlay)
-    if (cfg.rippleEnabled && spreadProgress > 0 && spreadProgress < 1 && image.points.length > 0) {
+    // Wave highlight rings — concentric arcs from each diffusion point
+    if (rippleActive && image.points.length > 0 && currentRadius > 4) {
       ctx.save()
-      ctx.globalCompositeOperation = 'screen'
+      ctx.globalAlpha = 0.25 * animFade
       for (const pt of image.points) {
         const cx = pt.x * width
         const cy = pt.y * height
-        for (let w = 0; w < RIPPLE_COUNT; w++) {
-          const ringR = currentRadius - w * RIPPLE_SPACING
-          if (ringR <= 2) continue
-          const fade = (1 - w / RIPPLE_COUNT) * Math.sin(spreadProgress * Math.PI)
-          const alpha = Math.max(0, fade * 0.35)
-          const lineW = Math.max(1, 2.5 - w * 0.6)
-          ctx.beginPath()
-          ctx.arc(cx, cy, ringR, 0, Math.PI * 2)
-          ctx.strokeStyle = `rgba(180, 210, 255, ${alpha})`
-          ctx.lineWidth = lineW
-          ctx.stroke()
+        for (let w = 0; w < WAVE_COUNT; w++) {
+          const ringRadius = currentRadius - w * WAVE_WIDTH
+          if (ringRadius > 0) {
+            ctx.beginPath()
+            ctx.arc(cx, cy, ringRadius, 0, Math.PI * 2)
+            ctx.strokeStyle = `rgba(150, 200, 255, ${0.3 - w * 0.08})`
+            ctx.lineWidth = 1.5
+            ctx.stroke()
+          }
         }
       }
       ctx.restore()
@@ -449,17 +490,24 @@ export function useDiffusionEngine(
   async function exportVideo(
     onProgress?: (p: number) => void,
     audioElement?: HTMLAudioElement | null,
+    /** Override the total export duration (ms). If omitted, defaults to one cycle. */
+    exportDurationMs?: number,
   ): Promise<Blob> {
     const canvas = canvasRef.value
     if (!canvas) throw new Error('Canvas not available')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Canvas context not available')
 
     await preloadImages()
     precomputeAll()
 
-    const totalDuration = getTotalCycleDuration()
+    const totalDuration = exportDurationMs ?? getTotalCycleDuration()
 
     const FPS = 30
     const FRAME_MS = 1000 / FPS
+    const totalFrames = Math.ceil(totalDuration / FRAME_MS)
+    const { width, height } = canvas
+
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9'
       : 'video/webm'
@@ -468,21 +516,20 @@ export function useDiffusionEngine(
     const videoStream = canvas.captureStream(FPS)
     let combinedStream: MediaStream = videoStream
     let audioCtx: AudioContext | null = null
+    const hasAudio = !!(audioElement && isBeatMode())
 
-    if (audioElement && isBeatMode()) {
+    if (hasAudio) {
       try {
         audioCtx = new AudioContext()
-        const source = audioCtx.createMediaElementSource(audioElement)
+        const source = audioCtx.createMediaElementSource(audioElement!)
         const dest = audioCtx.createMediaStreamDestination()
         source.connect(dest)
         source.connect(audioCtx.destination) // keep audible for user
-        const audioTracks = dest.stream.getAudioTracks()
         combinedStream = new MediaStream([
           ...videoStream.getVideoTracks(),
-          ...audioTracks,
+          ...dest.stream.getAudioTracks(),
         ])
       } catch {
-        // Fallback: video-only (audio element may already be captured)
         combinedStream = videoStream
       }
     }
@@ -497,34 +544,89 @@ export function useDiffusionEngine(
       if (e.data.size) chunks.push(e.data)
     }
 
-    // Start audio from beginning if beat-sync export
-    if (audioElement && isBeatMode()) {
-      audioElement.currentTime = 0
-      audioElement.play().catch(() => {})
-    }
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
-    return new Promise<Blob>((resolve, reject) => {
-      recorder.onerror = reject
-      recorder.onstop = () => {
-        if (audioElement) audioElement.pause()
-        if (audioCtx) audioCtx.close().catch(() => {})
-        resolve(new Blob(chunks, { type: 'video/webm' }))
-      }
+    const cleanupAndFinalize = () =>
+      new Promise<Blob>((resolve, reject) => {
+        recorder.onerror = reject
+        recorder.onstop = () => {
+          if (audioElement) audioElement.pause()
+          if (audioCtx) audioCtx.close().catch(() => {})
+          resolve(new Blob(chunks, { type: 'video/webm' }))
+        }
+        recorder.stop()
+      })
+
+    if (hasAudio) {
+      /* ── Audio export: audio drives the clock ──────────────────────────
+       * Audio plays at normal speed → MediaRecorder duration = audio duration.
+       * Video renders at audio's current position so frames stay in sync.
+       * If rendering is slow some frames may duplicate, but duration is correct.
+       */
+      audioElement!.currentTime = 0
+      await audioElement!.play().catch(() => {})
       recorder.start()
 
-      let elapsed = 0
-      function tick() {
-        if (elapsed >= totalDuration) {
-          recorder.stop()
-          return
+      const totalSec = totalDuration / 1000
+      return new Promise<Blob>((resolve, reject) => {
+        recorder.onerror = reject
+        recorder.onstop = () => {
+          audioElement!.pause()
+          if (audioCtx) audioCtx.close().catch(() => {})
+          resolve(new Blob(chunks, { type: 'video/webm' }))
         }
-        renderFrame(elapsed)
-        onProgress?.(elapsed / totalDuration)
-        elapsed += FRAME_MS
-        setTimeout(tick, FRAME_MS)
+        function tick() {
+          const t = audioElement!.currentTime
+          if (t >= totalSec) {
+            recorder.stop()
+            return
+          }
+          renderFrame(t * 1000, 2)
+          onProgress?.(t / totalSec)
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+    }
+
+    /* ── No-audio export: chunked pre-render + real-time playback ─────────
+     * Phase A (recorder paused): render frames offline — can be slow.
+     * Phase B (recorder active):  putImageData in real-time — trivially fast.
+     * This completely decouples rendering speed from video duration.
+     */
+    const CHUNK = FPS // 30 frames per chunk ≈ 1 second, ~110 MB buffer
+
+    recorder.start()
+    recorder.pause() // start paused; only record during real-time playback
+
+    for (let cs = 0; cs < totalFrames; cs += CHUNK) {
+      const ce = Math.min(cs + CHUNK, totalFrames)
+
+      // Phase A — pre-render chunk offline (recorder paused, no time penalty)
+      const frameBuffer: ImageData[] = []
+      for (let i = cs; i < ce; i++) {
+        renderFrame(i * FRAME_MS) // full quality, step = 1
+        frameBuffer.push(ctx.getImageData(0, 0, width, height))
       }
-      tick()
-    })
+
+      // Phase B — play back chunk in real-time (recorder active)
+      recorder.resume()
+      const playStart = performance.now()
+      for (let i = 0; i < frameBuffer.length; i++) {
+        ctx.putImageData(frameBuffer[i], 0, 0)
+        const nextTarget = playStart + (i + 1) * FRAME_MS
+        const delay = Math.max(1, nextTarget - performance.now())
+        await sleep(delay)
+      }
+      recorder.pause()
+
+      onProgress?.(ce / totalFrames)
+    }
+
+    // Finalize
+    recorder.resume()
+    await sleep(100) // ensure last frames are captured
+    return cleanupAndFinalize()
   }
 
   /* ── Cleanup ─────────────────────────────────────────────────────────── */

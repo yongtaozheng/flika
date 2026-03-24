@@ -31,6 +31,10 @@ async function handleAudioUpload(file: File) {
   audioPlayer.loadAudio(file)
   try {
     await analyzeBeats(file, sensitivity.value)
+    // 上传音乐并检测到节拍后，自动开启踩点模式
+    if (beats.value.length >= 2) {
+      config.beatSyncEnabled = true
+    }
   } catch (e) {
     console.error('节拍分析失败', e)
   }
@@ -47,7 +51,7 @@ watch(sensitivity, (val) => {
 const config = reactive<DiffusionConfig>({
   spreadDuration: 3000,
   pauseDuration: 1000,
-  loop: true,
+  loop: false,
   edgeWidth: 30,
   rippleEnabled: true,
   beatSyncEnabled: false,
@@ -248,7 +252,38 @@ async function handleExport() {
 
   try {
     const audioEl = engine.isBeatMode() ? audioPlayer.audioElement.value : null
-    const blob = await engine.exportVideo((p) => { exportProgress.value = p }, audioEl)
+
+    // "轮播1遍"的时长：
+    //   手动模式 → 所有图片 spreadDuration + pauseDuration 之和
+    //   踩点模式 → 前 N 个节拍段（N = 图片数），不是整首歌
+    const imgCount = images.value.length
+    const beatList = beats.value
+    let onePass: number
+    if (engine.isBeatMode() && beatList.length > 1) {
+      // 节拍段 i 对应图片 i%N，前 N 段结束于 beats[N].time
+      const endIdx = Math.min(imgCount, beatList.length - 1)
+      onePass = beatList[endIdx].time * 1000
+    } else {
+      onePass = engine.getTotalCycleDuration()
+    }
+
+    // 导出时长规则：
+    // 1. 勾选循环 + 有歌曲 → 按歌曲时长
+    // 2. 勾选循环 + 无歌曲 → 循环 2 遍
+    // 3. 未勾选循环       → 轮播 1 遍
+    let exportDuration: number
+    if (config.loop) {
+      const audioDurMs = audioPlayer.duration.value * 1000
+      exportDuration = audioDurMs > 0 ? audioDurMs : onePass * 2
+    } else {
+      exportDuration = onePass
+    }
+
+    const blob = await engine.exportVideo(
+      (p) => { exportProgress.value = p },
+      audioEl,
+      exportDuration,
+    )
     await saveVideoFile(blob)
   } catch (e) {
     console.error('导出失败', e)
