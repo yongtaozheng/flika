@@ -56,6 +56,8 @@ function handleImagesAdd(newImgs: UploadedImage[]) {
   const diffImgs: DiffusionImage[] = newImgs.map((img) => ({
     ...img,
     points: [],
+    spreadDuration: config.spreadDuration,
+    pauseDuration: config.pauseDuration,
   }))
   images.value = [...images.value, ...diffImgs]
 
@@ -79,11 +81,20 @@ function handleImageRemove(id: string) {
 }
 
 function handleImagesReorder(reordered: UploadedImage[]) {
-  const pointsMap = new Map(images.value.map((img) => [img.id, img.points]))
-  images.value = reordered.map((img) => ({
-    ...img,
-    points: pointsMap.get(img.id) ?? [],
-  }))
+  const extraMap = new Map(images.value.map((img) => [img.id, {
+    points: img.points,
+    spreadDuration: img.spreadDuration,
+    pauseDuration: img.pauseDuration,
+  }]))
+  images.value = reordered.map((img) => {
+    const extra = extraMap.get(img.id)
+    return {
+      ...img,
+      points: extra?.points ?? [],
+      spreadDuration: extra?.spreadDuration ?? config.spreadDuration,
+      pauseDuration: extra?.pauseDuration ?? config.pauseDuration,
+    }
+  })
 }
 
 // ── Point editing ───────────────────────────────────────────────────────────
@@ -155,7 +166,7 @@ function play() {
 
     // Check if non-loop playback finished
     if (!config.loop) {
-      const total = images.value.length * (config.spreadDuration + config.pauseDuration)
+      const total = engine.getTotalCycleDuration()
       if (elapsed >= total) {
         isPlaying.value = false
         return
@@ -243,6 +254,25 @@ function sliderFill(value: number, min: number, max: number) {
   const pct = ((value - min) / (max - min)) * 100
   return {
     background: `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--surface-3) ${pct}%, var(--surface-3) 100%)`,
+  }
+}
+
+// ── Per-image timing helpers ────────────────────────────────────────────────
+function updateImageSpread(idx: number, val: number) {
+  const clamped = Math.max(500, Math.min(15000, Math.round(val)))
+  if (images.value[idx]) images.value[idx].spreadDuration = clamped
+}
+function updateImagePause(idx: number, val: number) {
+  const clamped = Math.max(0, Math.min(10000, Math.round(val)))
+  if (images.value[idx]) images.value[idx].pauseDuration = clamped
+}
+/** Apply selected image's timing to all images */
+function applyTimingToAll() {
+  const src = currentImage.value
+  if (!src) return
+  for (const img of images.value) {
+    img.spreadDuration = src.spreadDuration
+    img.pauseDuration = src.pauseDuration
   }
 }
 
@@ -372,7 +402,7 @@ onUnmounted(() => {
           >
             <img :src="img.url" class="tab-thumb" />
             <span class="tab-idx">{{ idx + 1 }}</span>
-            <span class="tab-pts">{{ img.points.length }}点</span>
+            <span class="tab-pts">{{ img.points.length }}点 · {{ (img.spreadDuration / 1000).toFixed(1) }}s</span>
           </button>
         </div>
 
@@ -411,6 +441,48 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
+
+        <!-- Per-image timing -->
+        <div v-if="currentImage" class="per-image-timing">
+          <div class="timing-header">
+            <span class="timing-label">图片 {{ selectedImageIndex + 1 }} 时间设置</span>
+            <button v-if="images.length > 1" class="apply-all-btn" @click="applyTimingToAll" title="将当前时间设置应用到所有图片">
+              应用到全部
+            </button>
+          </div>
+
+          <div class="timing-row">
+            <label>扩散时长</label>
+            <div class="timing-ctl">
+              <input type="range" min="500" max="15000" step="100"
+                :value="currentImage.spreadDuration"
+                @input="updateImageSpread(selectedImageIndex, +($event.target as HTMLInputElement).value)"
+                :style="sliderFill(currentImage.spreadDuration, 500, 15000)" />
+              <div class="timing-input-wrap">
+                <input type="number" class="timing-input" min="500" max="15000" step="100"
+                  :value="currentImage.spreadDuration"
+                  @change="updateImageSpread(selectedImageIndex, +($event.target as HTMLInputElement).value)" />
+                <span class="timing-unit">ms</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="timing-row">
+            <label>停留时间</label>
+            <div class="timing-ctl">
+              <input type="range" min="0" max="10000" step="100"
+                :value="currentImage.pauseDuration"
+                @input="updateImagePause(selectedImageIndex, +($event.target as HTMLInputElement).value)"
+                :style="sliderFill(currentImage.pauseDuration, 0, 10000)" />
+              <div class="timing-input-wrap">
+                <input type="number" class="timing-input" min="0" max="10000" step="100"
+                  :value="currentImage.pauseDuration"
+                  @change="updateImagePause(selectedImageIndex, +($event.target as HTMLInputElement).value)" />
+                <span class="timing-unit">ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Playback controls -->
@@ -445,26 +517,6 @@ onUnmounted(() => {
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
           <span>扩散参数</span>
-        </div>
-
-        <div class="setting-row">
-          <label>扩散时长</label>
-          <div class="setting-ctl">
-            <input type="range" min="1000" max="10000" step="500"
-              v-model.number="config.spreadDuration"
-              :style="sliderFill(config.spreadDuration, 1000, 10000)" />
-            <span class="setting-val">{{ (config.spreadDuration / 1000).toFixed(1) }}s</span>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <label>停留时间</label>
-          <div class="setting-ctl">
-            <input type="range" min="0" max="5000" step="250"
-              v-model.number="config.pauseDuration"
-              :style="sliderFill(config.pauseDuration, 0, 5000)" />
-            <span class="setting-val">{{ (config.pauseDuration / 1000).toFixed(1) }}s</span>
-          </div>
         </div>
 
         <div class="setting-row">
@@ -779,4 +831,71 @@ onUnmounted(() => {
   width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer;
 }
 .loop-label { font-size: 12px; color: var(--text-3); }
+
+/* ── Per-image timing ── */
+.per-image-timing {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.timing-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.timing-label {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+.apply-all-btn {
+  font-size: 10px; font-weight: 500; color: var(--accent);
+  background: var(--accent-dim); border: 1px solid transparent;
+  padding: 2px 8px; border-radius: var(--r-xs);
+  cursor: pointer; transition: all 0.15s;
+}
+.apply-all-btn:hover {
+  background: rgba(112, 96, 255, 0.2); border-color: var(--accent);
+}
+
+.timing-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+}
+.timing-row:last-child { margin-bottom: 0; }
+.timing-row label {
+  width: 54px; font-size: 11px; color: var(--text-3); flex-shrink: 0;
+}
+.timing-ctl {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+}
+.timing-ctl input[type='range'] {
+  flex: 1; height: 4px; border-radius: 2px; appearance: none;
+  cursor: pointer; outline: none; min-width: 0;
+}
+.timing-ctl input[type='range']::-webkit-slider-thumb {
+  appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px rgba(112,96,255,0.4);
+  cursor: pointer;
+}
+
+.timing-input-wrap {
+  display: flex; align-items: center; gap: 2px; flex-shrink: 0;
+}
+.timing-input {
+  width: 52px; padding: 3px 4px; border-radius: var(--r-xs);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text-2); font-size: 11px; text-align: right;
+  outline: none; font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.timing-input::-webkit-inner-spin-button,
+.timing-input::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.timing-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(112, 96, 255, 0.3);
+}
+.timing-unit {
+  font-size: 10px; color: var(--text-4); flex-shrink: 0;
+}
 </style>

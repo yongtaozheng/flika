@@ -214,6 +214,10 @@ export interface DiffusionImage {
   name: string
   /** 用户放置的扩散点（归一化坐标） */
   points: DiffusionPoint[]
+  /** 单张图片扩散完成时长 (ms) */
+  spreadDuration: number
+  /** 单张图片停留时间 (ms) */
+  pauseDuration: number
 }
 
 /** 扩散着色 — 动画配置 */

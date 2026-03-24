@@ -30,7 +30,8 @@ const isDiffusion = computed(() => route.path === '/diffusion')
       <div class="divider" />
 
       <nav class="app-nav">
-        <router-link to="/" class="nav-item" :class="{ active: route.path === '/' }">
+        <!-- 暂时隐藏：踩点动画 -->
+        <router-link v-if="false" to="/beat" class="nav-item" :class="{ active: route.path === '/beat' }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
           </svg>
@@ -44,14 +45,16 @@ const isDiffusion = computed(() => route.path === '/diffusion')
           </svg>
           胶片放映
         </router-link>
-        <router-link to="/music-ball" class="nav-item" :class="{ active: isMusicBall }">
+        <!-- 暂时隐藏：音乐小球 -->
+        <router-link v-if="false" to="/music-ball" class="nav-item" :class="{ active: isMusicBall }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="7" r="4"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/>
             <line x1="9" y1="10" x2="7" y2="15"/><line x1="15" y1="10" x2="17" y2="15"/>
           </svg>
           音乐小球
         </router-link>
-        <router-link to="/splice" class="nav-item" :class="{ active: isSplice }">
+        <!-- 暂时隐藏：涟漪拼接 -->
+        <router-link v-if="false" to="/splice" class="nav-item" :class="{ active: isSplice }">
           <svg width="13" height="13" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="3.5">
             <circle cx="22" cy="22" r="5"/><circle cx="22" cy="22" r="13"/><circle cx="22" cy="22" r="21"/>
           </svg>

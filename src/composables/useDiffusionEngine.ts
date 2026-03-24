@@ -187,6 +187,38 @@ export function useDiffusionEngine(
     ctx.putImageData(output, 0, 0)
   }
 
+  /* ── Helpers: per-image timing ──────────────────────────────────────── */
+  function getTotalCycleDuration(): number {
+    const images = imagesRef.value
+    let total = 0
+    for (const img of images) {
+      total += img.spreadDuration + img.pauseDuration
+    }
+    return total
+  }
+
+  function resolveImageAtTime(effectiveTime: number): {
+    imageIndex: number
+    imageTime: number
+  } {
+    const images = imagesRef.value
+    let acc = 0
+    for (let i = 0; i < images.length; i++) {
+      const imgTotal = images[i].spreadDuration + images[i].pauseDuration
+      if (acc + imgTotal > effectiveTime) {
+        return { imageIndex: i, imageTime: effectiveTime - acc }
+      }
+      acc += imgTotal
+    }
+    // Past the end — clamp to last image
+    const lastIdx = images.length - 1
+    let lastStart = 0
+    for (let i = 0; i < lastIdx; i++) {
+      lastStart += images[i].spreadDuration + images[i].pauseDuration
+    }
+    return { imageIndex: lastIdx, imageTime: effectiveTime - lastStart }
+  }
+
   /* ── Core render frame at given elapsed time (ms) ────────────────────── */
   function renderFrame(elapsedMs: number): void {
     const canvas = canvasRef.value
@@ -203,8 +235,7 @@ export function useDiffusionEngine(
     }
 
     const { width, height } = canvas
-    const totalPerImage = cfg.spreadDuration + cfg.pauseDuration
-    const totalCycle = images.length * totalPerImage
+    const totalCycle = getTotalCycleDuration()
 
     let effectiveTime = elapsedMs
     if (cfg.loop) {
@@ -213,12 +244,8 @@ export function useDiffusionEngine(
       effectiveTime = Math.min(elapsedMs, totalCycle - 1)
     }
 
-    // Determine current image and phase
-    const imageIndex = Math.min(
-      Math.floor(effectiveTime / totalPerImage),
-      images.length - 1,
-    )
-    const imageTime = effectiveTime - imageIndex * totalPerImage
+    // Determine current image and phase (per-image durations)
+    const { imageIndex, imageTime } = resolveImageAtTime(effectiveTime)
 
     const image = images[imageIndex]
     const data = precomputed.get(image.id)
@@ -228,7 +255,7 @@ export function useDiffusionEngine(
       return
     }
 
-    const spreadProgress = Math.min(1, imageTime / cfg.spreadDuration)
+    const spreadProgress = Math.min(1, imageTime / image.spreadDuration)
     const currentRadius = spreadProgress * data.maxDist
     const edgeWidth = cfg.edgeWidth
 
@@ -328,21 +355,17 @@ export function useDiffusionEngine(
     const cfg = configRef.value
     if (images.length === 0) return { index: 0, phase: 'idle' as const, progress: 0 }
 
-    const totalPerImage = cfg.spreadDuration + cfg.pauseDuration
-    const totalCycle = images.length * totalPerImage
+    const totalCycle = getTotalCycleDuration()
 
     let effectiveTime = cfg.loop ? elapsedMs % totalCycle : Math.min(elapsedMs, totalCycle - 1)
-    const imageIndex = Math.min(
-      Math.floor(effectiveTime / totalPerImage),
-      images.length - 1,
-    )
-    const imageTime = effectiveTime - imageIndex * totalPerImage
+    const { imageIndex, imageTime } = resolveImageAtTime(effectiveTime)
+    const image = images[imageIndex]
 
-    if (imageTime <= cfg.spreadDuration) {
+    if (imageTime <= image.spreadDuration) {
       return {
         index: imageIndex,
         phase: 'spreading' as const,
-        progress: imageTime / cfg.spreadDuration,
+        progress: imageTime / image.spreadDuration,
       }
     }
     return {
@@ -362,9 +385,7 @@ export function useDiffusionEngine(
     await preloadImages()
     precomputeAll()
 
-    const cfg = configRef.value
-    const images = imagesRef.value
-    const totalDuration = images.length * (cfg.spreadDuration + cfg.pauseDuration)
+    const totalDuration = getTotalCycleDuration()
 
     const FPS = 30
     const FRAME_MS = 1000 / FPS
@@ -420,6 +441,7 @@ export function useDiffusionEngine(
     renderFrame,
     renderStaticFrame,
     getPlaybackInfo,
+    getTotalCycleDuration,
     exportVideo,
     cleanup,
   }
