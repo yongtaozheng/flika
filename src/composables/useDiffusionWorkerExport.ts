@@ -328,13 +328,22 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
       ? 'video/webm;codecs=vp9'
       : 'video/webm'
 
+    // 创建独立的 audio 元素用于导出，避免 createMediaElementSource 永久接管预览用的 audio 元素
+    const exportAudio = new Audio(audioEl.src)
+    exportAudio.preload = 'auto'
+    await new Promise<void>((resolve) => {
+      exportAudio.addEventListener('canplaythrough', () => resolve(), { once: true })
+      exportAudio.addEventListener('error', () => resolve(), { once: true })
+      exportAudio.load()
+    })
+
     const videoStream = canvas.captureStream(fps)
     let combinedStream: MediaStream = videoStream
     let audioCtx: AudioContext | null = null
 
     try {
       audioCtx = new AudioContext()
-      const source = audioCtx.createMediaElementSource(audioEl)
+      const source = audioCtx.createMediaElementSource(exportAudio)
       const dest = audioCtx.createMediaStreamDestination()
       source.connect(dest)
       source.connect(audioCtx.destination)
@@ -370,8 +379,8 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
     w.postMessage({ type: 'render-batch', startFrame: 0, endFrame: totalFrames })
 
     // 音频驱动
-    audioEl.currentTime = 0
-    await audioEl.play().catch(() => {})
+    exportAudio.currentTime = 0
+    await exportAudio.play().catch(() => {})
     recorder.start()
 
     const totalSec = totalDurationMs / 1000
@@ -379,7 +388,8 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
     const blob = await new Promise<Blob>((resolve, reject) => {
       recorder.onerror = reject
       recorder.onstop = () => {
-        audioEl.pause()
+        exportAudio.pause()
+        exportAudio.src = ''
         if (audioCtx) audioCtx.close().catch(() => {})
         resolve(new Blob(chunks, { type: 'video/webm' }))
       }
@@ -389,7 +399,7 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
           recorder.stop()
           return
         }
-        const t = audioEl.currentTime
+        const t = exportAudio.currentTime
         if (t >= totalSec) {
           recorder.stop()
           return

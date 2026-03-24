@@ -435,13 +435,22 @@ export function useDiffusionEngine(
       ? 'video/webm;codecs=vp9'
       : 'video/webm'
 
+    // 创建独立的 audio 元素用于导出，避免 createMediaElementSource 永久接管预览用的 audio 元素
+    const exportAudio = new Audio(audioElement.src)
+    exportAudio.preload = 'auto'
+    await new Promise<void>((resolve, reject) => {
+      exportAudio.addEventListener('canplaythrough', () => resolve(), { once: true })
+      exportAudio.addEventListener('error', reject, { once: true })
+      exportAudio.load()
+    })
+
     const videoStream = canvas.captureStream(FPS)
     let combinedStream: MediaStream = videoStream
     let audioCtx: AudioContext | null = null
 
     try {
       audioCtx = new AudioContext()
-      const source = audioCtx.createMediaElementSource(audioElement)
+      const source = audioCtx.createMediaElementSource(exportAudio)
       const dest = audioCtx.createMediaStreamDestination()
       source.connect(dest)
       source.connect(audioCtx.destination)
@@ -461,8 +470,8 @@ export function useDiffusionEngine(
     const chunks: Blob[] = []
     recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
 
-    audioElement.currentTime = 0
-    await audioElement.play().catch(() => {})
+    exportAudio.currentTime = 0
+    await exportAudio.play().catch(() => {})
     recorder.start()
 
     const totalSec = totalDuration / 1000
@@ -470,17 +479,18 @@ export function useDiffusionEngine(
     return new Promise<Blob>((resolve, reject) => {
       recorder.onerror = reject
       recorder.onstop = () => {
-        audioElement.pause()
+        exportAudio.pause()
+        exportAudio.src = ''
         if (audioCtx) audioCtx.close().catch(() => {})
         resolve(new Blob(chunks, { type: 'video/webm' }))
       }
       function tick() {
         if (audioCancelled) {
-          audioElement.pause()
+          exportAudio.pause()
           recorder.stop()
           return
         }
-        const t = audioElement.currentTime
+        const t = exportAudio.currentTime
         if (t >= totalSec) {
           recorder.stop()
           return

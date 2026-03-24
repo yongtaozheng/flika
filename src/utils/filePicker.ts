@@ -96,18 +96,24 @@ export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg'): Promise<vo
 
 /**
  * 保存视频文件
+ * - 自动检测格式：MP4 或 WebM（根据 blob.type）
  * - Tauri: 打开系统保存对话框，写入文件
  * - Web: 触发浏览器下载
  */
 export async function saveVideoFile(blob: Blob): Promise<void> {
+  const isMP4 = blob.type.includes('mp4')
+  const ext = isMP4 ? 'mp4' : 'webm'
+  const filename = `flika-export.${ext}`
+  const filterName = isMP4 ? 'MP4 视频' : 'WebM 视频'
+
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { writeFile } = await import('@tauri-apps/plugin-fs')
 
     const path = await save({
       title: '保存视频',
-      defaultPath: 'flika-export.webm',
-      filters: [{ name: '视频', extensions: ['webm'] }],
+      defaultPath: filename,
+      filters: [{ name: filterName, extensions: [ext] }],
     })
 
     if (!path) return
@@ -118,7 +124,7 @@ export async function saveVideoFile(blob: Blob): Promise<void> {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'flika-export.webm'
+    a.download = filename
     a.click()
     URL.revokeObjectURL(url)
   }

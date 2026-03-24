@@ -158,7 +158,8 @@ export function useAnimationEngine(
   function renderFrame(
     enabledEffects: AnimationEffect[],
     effectDuration: number,
-    backgroundColor: string
+    backgroundColor: string,
+    overrideTime?: number
   ) {
     const canvas = canvasRef.value
     if (!canvas) return
@@ -168,7 +169,7 @@ export function useAnimationEngine(
 
     const width = canvas.width
     const height = canvas.height
-    const time = currentTime.value
+    const time = overrideTime !== undefined ? overrideTime : currentTime.value
 
     // 更新效果
     updateEffects(time, enabledEffects, effectDuration)
@@ -632,22 +633,177 @@ export function useAnimationEngine(
   }
 
   /**
-   * 重置状态
+   * 重置动画状态（不清除图片缓存，以免导出后无法播放）
    */
   function reset() {
     currentImageIndex.value = 0
     activeEffects.value.clear()
-    imageCache.clear()
   }
 
   /**
-   * 导出为视频 (WebM)
+   * 导出为 MP4 (WebCodecs + mediabunny)
+   * 离线逐帧渲染，不依赖实时播放，速度更快、帧精确
+   */
+  async function exportAsMP4(
+    canvas: HTMLCanvasElement,
+    audioFile: File,
+    enabledEffects: AnimationEffect[],
+    effectDuration: number,
+    backgroundColor: string,
+    fps: number,
+    onProgress?: (progress: number) => void
+  ): Promise<Blob> {
+    const {
+      Output,
+      BufferTarget,
+      Mp4OutputFormat,
+      CanvasSource,
+      AudioBufferSource,
+    } = await import('mediabunny')
+
+    // 直接从原始 File 解码音频为 AudioBuffer（避免 blob URL fetch 问题）
+    const audioArrayBuffer = await audioFile.arrayBuffer()
+    const audioCtx = new AudioContext()
+    const audioBuffer = await audioCtx.decodeAudioData(audioArrayBuffer)
+    await audioCtx.close()
+
+    const totalDuration = audioBuffer.duration
+    const totalFrames = Math.ceil(totalDuration * fps)
+    const frameDuration = 1 / fps
+
+    if (totalFrames === 0) throw new Error('音频时长为零')
+
+    // 初始化 mediabunny 输出
+    const target = new BufferTarget()
+    const output = new Output({
+      format: new Mp4OutputFormat(),
+      target,
+    })
+
+    const videoSource = new CanvasSource(canvas, {
+      codec: 'avc',
+      bitrate: 5_000_000,
+    })
+    output.addVideoTrack(videoSource)
+
+    const audioSource = new AudioBufferSource({
+      codec: 'aac',
+      bitrate: 128_000,
+    })
+    output.addAudioTrack(audioSource)
+
+    await output.start()
+
+    // 离线逐帧渲染
+    reset()
+    for (let i = 0; i < totalFrames; i++) {
+      const frameTime = i * frameDuration
+      renderFrame(enabledEffects, effectDuration, backgroundColor, frameTime)
+      await videoSource.add(frameTime, frameDuration)
+
+      if (onProgress) {
+        onProgress((i + 1) / totalFrames)
+      }
+    }
+
+    // 编码音频
+    await audioSource.add(audioBuffer)
+
+    // 完成封装
+    await output.finalize()
+
+    return new Blob([target.buffer!], { type: 'video/mp4' })
+  }
+
+  /**
+   * 导出为 WebM (MediaRecorder 降级方案)
+   * 实时录制，用于不支持 WebCodecs 的浏览器
+   */
+  async function exportAsWebM(
+    canvas: HTMLCanvasElement,
+    audioElement: HTMLAudioElement,
+    enabledEffects: AnimationEffect[],
+    effectDuration: number,
+    backgroundColor: string,
+    fps: number,
+    onProgress?: (progress: number) => void
+  ): Promise<Blob> {
+    const stream = canvas.captureStream(fps)
+
+    // 创建独立的 audio 元素用于导出，避免 createMediaElementSource 永久接管预览用的 audio 元素
+    const exportAudio = new Audio(audioElement.src)
+    exportAudio.preload = 'auto'
+    await new Promise<void>((resolve, reject) => {
+      exportAudio.addEventListener('canplaythrough', () => resolve(), { once: true })
+      exportAudio.addEventListener('error', reject, { once: true })
+      exportAudio.load()
+    })
+
+    const audioCtx = new AudioContext()
+    const source = audioCtx.createMediaElementSource(exportAudio)
+    const dest = audioCtx.createMediaStreamDestination()
+    source.connect(dest)
+    source.connect(audioCtx.destination)
+
+    const combinedStream = new MediaStream([
+      ...stream.getTracks(),
+      ...dest.stream.getTracks(),
+    ])
+
+    const recorder = new MediaRecorder(combinedStream, {
+      mimeType: 'video/webm;codecs=vp9',
+      videoBitsPerSecond: 5000000,
+    })
+
+    const chunks: Blob[] = []
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data)
+    }
+
+    return new Promise<Blob>((resolve, reject) => {
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' })
+        source.disconnect()
+        audioCtx.close()
+        exportAudio.src = ''
+        resolve(blob)
+      }
+
+      recorder.onerror = (e) => {
+        reject(e)
+      }
+
+      recorder.start()
+      reset()
+      exportAudio.currentTime = 0
+      exportAudio.play()
+
+      const renderLoop = () => {
+        if (!exportAudio.paused && !exportAudio.ended) {
+          renderFrame(enabledEffects, effectDuration, backgroundColor)
+          if (onProgress) {
+            onProgress(exportAudio.currentTime / exportAudio.duration)
+          }
+          requestAnimationFrame(renderLoop)
+        } else {
+          recorder.stop()
+        }
+      }
+      renderLoop()
+    })
+  }
+
+  /**
+   * 导出视频（优先 MP4，降级 WebM）
+   * - WebCodecs 可用时：使用 mediabunny 离线编码为 MP4 (H.264 + AAC)
+   * - 降级方案：使用 MediaRecorder 实时录制为 WebM (VP9)
    */
   async function exportVideo(
     audioElement: HTMLAudioElement,
     enabledEffects: AnimationEffect[],
     effectDuration: number,
     backgroundColor: string,
+    audioFile?: File,
     fps: number = 30,
     onProgress?: (progress: number) => void
   ): Promise<Blob> {
@@ -659,70 +815,22 @@ export function useAnimationEngine(
     try {
       await preloadImages()
 
-      // 使用 captureStream + MediaRecorder
-      const stream = canvas.captureStream(fps)
-
-      // 创建音频源
-      const audioCtx = new AudioContext()
-      const source = audioCtx.createMediaElementSource(audioElement)
-      const dest = audioCtx.createMediaStreamDestination()
-      source.connect(dest)
-      source.connect(audioCtx.destination) // 同时播放
-
-      // 合并视频流和音频流
-      const combinedStream = new MediaStream([
-        ...stream.getTracks(),
-        ...dest.stream.getTracks(),
-      ])
-
-      const recorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm;codecs=vp9',
-        videoBitsPerSecond: 5000000,
-      })
-
-      const chunks: Blob[] = []
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data)
+      // 优先使用 WebCodecs + mediabunny 导出 MP4（需要原始音频 File）
+      if (typeof VideoEncoder !== 'undefined' && audioFile) {
+        return await exportAsMP4(
+          canvas, audioFile, enabledEffects, effectDuration,
+          backgroundColor, fps, onProgress
+        )
       }
 
-      return new Promise<Blob>((resolve, reject) => {
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'video/webm' })
-          source.disconnect()
-          audioCtx.close()
-          isRendering.value = false
-          resolve(blob)
-        }
-
-        recorder.onerror = (e) => {
-          isRendering.value = false
-          reject(e)
-        }
-
-        recorder.start()
-
-        // 开始播放
-        reset()
-        audioElement.currentTime = 0
-        audioElement.play()
-
-        // 渲染循环
-        const renderLoop = () => {
-          if (!audioElement.paused && !audioElement.ended) {
-            renderFrame(enabledEffects, effectDuration, backgroundColor)
-            if (onProgress) {
-              onProgress(audioElement.currentTime / audioElement.duration)
-            }
-            requestAnimationFrame(renderLoop)
-          } else {
-            recorder.stop()
-          }
-        }
-        renderLoop()
-      })
-    } catch (error) {
+      // 降级到 WebM (MediaRecorder) — 仅当 WebCodecs 不可用时
+      return await exportAsWebM(
+        canvas, audioElement, enabledEffects, effectDuration,
+        backgroundColor, fps, onProgress
+      )
+    } finally {
       isRendering.value = false
-      throw error
+      reset()
     }
   }
 

@@ -473,10 +473,20 @@ export function useIntroEngine(
       const stream = canvas.captureStream(fps)
 
       let combinedStream: MediaStream
+      // 创建独立的 audio 元素用于导出，避免 createMediaElementSource 永久接管预览用的 audio 元素
+      let exportAudio: HTMLAudioElement | null = null
 
       if (audioElement && audioElement.src) {
+        exportAudio = new Audio(audioElement.src)
+        exportAudio.preload = 'auto'
+        await new Promise<void>((resolve) => {
+          exportAudio!.addEventListener('canplaythrough', () => resolve(), { once: true })
+          exportAudio!.addEventListener('error', () => resolve(), { once: true })
+          exportAudio!.load()
+        })
+
         const audioCtx = new AudioContext()
-        const source = audioCtx.createMediaElementSource(audioElement)
+        const source = audioCtx.createMediaElementSource(exportAudio)
         const dest = audioCtx.createMediaStreamDestination()
         source.connect(dest)
         source.connect(audioCtx.destination)
@@ -487,11 +497,11 @@ export function useIntroEngine(
         ])
 
         // cleanup after export
-        const origStop = audioElement.pause.bind(audioElement)
         combinedStream.addEventListener('inactive', () => {
           source.disconnect()
           audioCtx.close()
-          origStop()
+          exportAudio!.pause()
+          exportAudio!.src = ''
         })
       } else {
         combinedStream = stream
@@ -507,6 +517,7 @@ export function useIntroEngine(
         if (e.data.size > 0) chunks.push(e.data)
       }
 
+      const playAudio = exportAudio
       return new Promise<Blob>((resolve, reject) => {
         recorder.onstop = () => {
           isRendering.value = false
@@ -519,9 +530,9 @@ export function useIntroEngine(
 
         recorder.start()
 
-        if (audioElement) {
-          audioElement.currentTime = 0
-          audioElement.play().catch(() => {/* ok */})
+        if (playAudio) {
+          playAudio.currentTime = 0
+          playAudio.play().catch(() => {/* ok */})
         }
 
         // start bg video from beginning
@@ -543,7 +554,7 @@ export function useIntroEngine(
           if (elapsed < totalMs) {
             requestAnimationFrame(renderLoop)
           } else {
-            audioElement?.pause()
+            playAudio?.pause()
             if (bgMedia.value instanceof HTMLVideoElement) bgMedia.value.pause()
             recorder.stop()
           }

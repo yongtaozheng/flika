@@ -334,10 +334,20 @@ export function useFilmStripEngine(
     const totalFrames = Math.ceil(durationSec * FPS)
     const stream      = canvas.captureStream(FPS)
 
+    // 创建独立的 audio 元素用于导出，避免 createMediaElementSource 永久接管预览用的 audio 元素
+    let exportAudio: HTMLAudioElement | null = null
     if (audioEl) {
       try {
+        exportAudio = new Audio(audioEl.src)
+        exportAudio.preload = 'auto'
+        await new Promise<void>((resolve) => {
+          exportAudio!.addEventListener('canplaythrough', () => resolve(), { once: true })
+          exportAudio!.addEventListener('error', () => resolve(), { once: true })
+          exportAudio!.load()
+        })
+
         const actx = new AudioContext()
-        const src  = actx.createMediaElementSource(audioEl)
+        const src  = actx.createMediaElementSource(exportAudio)
         const dest = actx.createMediaStreamDestination()
         src.connect(dest); src.connect(actx.destination)
         dest.stream.getAudioTracks().forEach(t => stream.addTrack(t))
@@ -347,15 +357,19 @@ export function useFilmStripEngine(
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
       ? 'video/webm;codecs=vp9' : 'video/webm'
 
+    const playAudio = exportAudio
     return new Promise<Blob>((resolve, reject) => {
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 })
       const chunks: Blob[] = []
       recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-      recorder.onstop  = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+      recorder.onstop  = () => {
+        if (playAudio) { playAudio.pause(); playAudio.src = '' }
+        resolve(new Blob(chunks, { type: 'video/webm' }))
+      }
       recorder.onerror = e => reject(e)
       recorder.start()
 
-      if (audioEl) { audioEl.currentTime = 0; audioEl.play().catch(() => {}) }
+      if (playAudio) { playAudio.currentTime = 0; playAudio.play().catch(() => {}) }
       for (const col of cols) {
         if (col.type === 'video') {
           const el = videoEls.get(col.id)
@@ -366,7 +380,7 @@ export function useFilmStripEngine(
       let f = 0
       function tick() {
         if (f >= totalFrames) {
-          audioEl?.pause()
+          playAudio?.pause()
           cols.forEach(col => { if (col.type === 'video') videoEls.get(col.id)?.pause() })
           recorder.stop(); return
         }

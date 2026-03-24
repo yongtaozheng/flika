@@ -110,6 +110,7 @@ async function handleExport() {
       config.effects.filter((e) => e.enabled).map((e) => e.type),
       config.effectDuration,
       config.backgroundColor,
+      audioFile.value!,
     )
     await saveVideoFile(blob)
   } catch (e) {
