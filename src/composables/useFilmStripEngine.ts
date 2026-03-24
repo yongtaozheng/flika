@@ -63,10 +63,34 @@ export function useFilmStripEngine(
     return grainCache
   }
 
+  // ── Per-image frame positions (variable height based on aspect ratio) ────────
+  function getFramePositions(col: FilmColumnData): { y: number; h: number }[] {
+    const cache = getImgCache(col.id)
+    const full  = col.fullHeight ?? false
+    const fW    = full ? COL_W : FR_W
+    const results: { y: number; h: number }[] = []
+    let y = 0
+    for (const img of col.images) {
+      const el = cache.get(img.id)
+      let h: number
+      if (el?.complete && el.naturalWidth > 0) {
+        h = Math.round(fW * (el.naturalHeight / el.naturalWidth))
+      } else {
+        h = full ? FILM_H : FR_H   // fallback to original fixed height
+      }
+      results.push({ y, h })
+      y += h + FR_GAP
+    }
+    return results
+  }
+
   // column total scroll height (images only; video = Infinity)
   function colTotalHeight(col: FilmColumnData) {
     if (col.type !== 'images') return Infinity
-    return col.images.length * (col.fullHeight ? FULL_STRIDE : FRAME_STRIDE)
+    if (col.images.length === 0) return 0
+    const positions = getFramePositions(col)
+    const last = positions[positions.length - 1]
+    return last.y + last.h
   }
 
   // ── preload / video management ───────────────────────────────────────────────
@@ -174,31 +198,35 @@ export function useFilmStripEngine(
     c.fillStyle = '#0a0908'; c.fillRect(colX, 0, COL_W, FILM_H)
     const cache  = getImgCache(col.id)
     const full   = col.fullHeight ?? false
-    const stride = full ? FULL_STRIDE : FRAME_STRIDE
     const fW     = full ? COL_W : FR_W
-    const fH     = full ? FILM_H : FR_H
     const fX     = full ? colX  : colX + FR_X_LOCAL
-    const first  = Math.max(0, Math.floor(scrollY / stride) - 1)
-    const last   = Math.min(col.images.length - 1, Math.ceil((scrollY + FILM_H) / stride))
-    for (let i = first; i <= last; i++) {
+    const positions = getFramePositions(col)
+
+    for (let i = 0; i < col.images.length; i++) {
+      const { y: frameY, h: frameH } = positions[i]
+      const y = frameY - scrollY
+
+      // Skip if outside visible area
+      if (y + frameH < 0) continue
+      if (y > FILM_H) break
+
       const img = col.images[i]
-      const y   = i * stride - scrollY
       if (!full) {
-        c.fillStyle = '#181410'; c.fillRect(colX + SP_W, y - 4, COL_W - 2 * SP_W, FR_H + 8)
+        c.fillStyle = '#181410'; c.fillRect(colX + SP_W, y - 4, COL_W - 2 * SP_W, frameH + 8)
       }
       const el = cache.get(img.id)
       if (el?.complete && el.naturalWidth > 0) {
-        const off = col.imgOffsets?.get(img.id) ?? { x: 0, y: 0 }
-        coverDraw(c, el, el.naturalWidth, el.naturalHeight, fX, y, fW, fH, off.x, off.y)
-        applyFilmLook(c, fX, y, fW, fH)
+        // Width-fit: draw entire image filling frame width, height proportional
+        c.drawImage(el, fX, y, fW, frameH)
+        applyFilmLook(c, fX, y, fW, frameH)
       } else {
-        c.fillStyle = '#0e0b07'; c.fillRect(fX, y, fW, fH)
+        c.fillStyle = '#0e0b07'; c.fillRect(fX, y, fW, frameH)
       }
       if (!full) {
         // frame number decoration
         c.save(); c.font = '11px monospace'; c.fillStyle = 'rgba(255,200,100,0.28)'
         c.textAlign = 'right'; c.textBaseline = 'bottom'
-        c.fillText(String(i + 1).padStart(4, '0'), fX + fW - 6, y + fH - 4)
+        c.fillText(String(i + 1).padStart(4, '0'), fX + fW - 6, y + frameH - 4)
         c.strokeStyle = 'rgba(255,200,100,0.14)'; c.lineWidth = 0.8
         c.beginPath(); c.arc(fX + 9, y + 9, 3, 0, Math.PI * 2); c.stroke()
         c.beginPath(); c.moveTo(fX + 15, y + 9); c.lineTo(fX + 36, y + 9); c.stroke()
@@ -298,7 +326,7 @@ export function useFilmStripEngine(
     // determine recording duration
     const imgMaxHeight = cols
       .filter(c => c.type === 'images')
-      .reduce((m, c) => Math.max(m, c.images.length * (c.fullHeight ? FULL_STRIDE : FRAME_STRIDE)), 0)
+      .reduce((m, c) => Math.max(m, colTotalHeight(c)), 0)
     const durationSec = imgMaxHeight > 0
       ? imgMaxHeight / pxPerSec + 0.8
       : (audioEl ? audioEl.duration + 0.5 : 30)
@@ -345,8 +373,7 @@ export function useFilmStripEngine(
         const t = f / FPS
         const offsets = cols.map((col) => {
           if (col.type !== 'images') return t * pxPerSec
-          const stride = col.fullHeight ? FULL_STRIDE : FRAME_STRIDE
-          return Math.min(t * pxPerSec, col.images.length * stride)
+          return Math.min(t * pxPerSec, colTotalHeight(col))
         })
         renderFrame(offsets, { ...opts, beatStrength: 0 })
         onProgress?.(f / totalFrames)
@@ -359,6 +386,7 @@ export function useFilmStripEngine(
 
   return {
     colTotalHeight,
+    getFramePositions,
     preloadColumnImages,
     removeColumnImage,
     loadColumnVideo,

@@ -169,6 +169,24 @@ function clearPoints(imageId: string) {
   if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
 }
 
+/** 一键为所有没有扩散点的图片随机添加一个扩散点 */
+function autoAddPoints() {
+  let changed = false
+  for (const img of images.value) {
+    if (img.points.length === 0) {
+      // 随机点，避免太靠边缘（0.15 ~ 0.85）
+      const x = 0.15 + Math.random() * 0.7
+      const y = 0.15 + Math.random() * 0.7
+      img.points.push({ id: uuidv4(), x, y })
+      engine.precomputeImage(img)
+      changed = true
+    }
+  }
+  if (changed && !isPlaying.value) {
+    engine.renderStaticFrame(selectedImageIndex.value)
+  }
+}
+
 function pointMarkerStyle(pt: { x: number; y: number }) {
   return {
     left: `${pt.x * 100}%`,
@@ -546,7 +564,7 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <!-- Edit mode toggle + clear -->
+        <!-- Edit mode toggle + auto-add + clear -->
         <div class="point-actions">
           <button
             class="edit-toggle"
@@ -558,6 +576,17 @@ onUnmounted(() => {
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             {{ editingMode ? '退出编辑' : '编辑扩散点' }}
+          </button>
+          <button
+            v-if="images.some(img => img.points.length === 0)"
+            class="auto-add-btn"
+            @click="autoAddPoints"
+            :disabled="isPlaying"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-7.07l-2.83 2.83M9.76 14.24l-2.83 2.83m12.14 0l-2.83-2.83M9.76 9.76L6.93 6.93" />
+            </svg>
+            一键添加
           </button>
           <button
             v-if="currentImagePoints.length > 0"
@@ -881,6 +910,17 @@ onUnmounted(() => {
   background: var(--accent-dim);
 }
 .edit-toggle:disabled { opacity: 0.4; cursor: default; }
+
+.auto-add-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 7px 12px; border-radius: var(--r-sm);
+  font-size: 11.5px; font-weight: 500;
+  color: var(--teal); background: var(--teal-dim);
+  border: 1px solid rgba(29, 201, 158, 0.15);
+  cursor: pointer; transition: all 0.15s;
+}
+.auto-add-btn:hover { background: rgba(29, 201, 158, 0.18); border-color: rgba(29, 201, 158, 0.3); }
+.auto-add-btn:disabled { opacity: 0.4; cursor: default; }
 
 .clear-btn {
   padding: 7px 12px; border-radius: var(--r-sm);

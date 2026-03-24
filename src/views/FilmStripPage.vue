@@ -3,7 +3,7 @@ import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from
 import type { UploadedImage } from '../types'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { useBeatDetector } from '../composables/useBeatDetector'
-import { useFilmStripEngine, COL_W, FILM_H, FRAME_STRIDE, FULL_STRIDE, type FilmColumnData } from '../composables/useFilmStripEngine'
+import { useFilmStripEngine, COL_W, FILM_H, type FilmColumnData } from '../composables/useFilmStripEngine'
 import { saveVideoFile } from '../utils/filePicker'
 
 // ── Column state ──────────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ function animLoop(ts: number) {
       if (col.type === 'video') {
         scrollOffsets[i] += pxPerSec * delta   // sprocket animation only
       } else {
-        const total = col.images.length * (i < 2 ? FULL_STRIDE : FRAME_STRIDE)
+        const total = engine.colTotalHeight(activeCols.value[i])
         if (!colReachedEnd[i]) {
           const next = scrollOffsets[i] + pxPerSec * delta
           if (next >= total) { scrollOffsets[i] = total; colReachedEnd[i] = true }
@@ -283,8 +283,14 @@ function onCanvasMouseDown(e: MouseEvent) {
   if (colIdx >= columnCount.value || colIdx >= 2) return   // only columns 1 & 2
   const col = columns[colIdx]
   if (col.type !== 'images' || !col.images.length) return
-  const stride = colIdx < 2 ? FULL_STRIDE : FRAME_STRIDE
-  const imgIdx = Math.floor((y + scrollOffsets[colIdx]) / stride)
+  const positions = engine.getFramePositions(activeCols.value[colIdx])
+  const absY = y + scrollOffsets[colIdx]
+  let imgIdx = -1
+  for (let pi = 0; pi < positions.length; pi++) {
+    if (absY >= positions[pi].y && absY < positions[pi].y + positions[pi].h) {
+      imgIdx = pi; break
+    }
+  }
   if (imgIdx < 0 || imgIdx >= col.images.length) return
   const imgId  = col.images[imgIdx].id
   const off    = imgOffsets[colIdx].get(imgId) ?? { x: 0, y: 0 }
