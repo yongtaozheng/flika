@@ -273,14 +273,21 @@ async function handleExport() {
 
     // "轮播1遍"的时长：
     //   手动模式 → 所有图片 spreadDuration + pauseDuration 之和
-    //   踩点模式 → 前 N 个节拍段（N = 图片数），不是整首歌
+    //   踩点模式 → 保证所有图片都展示（不够的节拍用平均间隔外推）
     const imgCount = images.value.length
     const beatList = beats.value
     let onePass: number
     if (engine.isBeatMode() && beatList.length > 1) {
-      // 节拍段 i 对应图片 i%N，前 N 段结束于 beats[N].time
-      const endIdx = Math.min(imgCount, beatList.length - 1)
-      onePass = beatList[endIdx].time * 1000
+      const beatSegments = beatList.length - 1
+      if (beatSegments >= imgCount) {
+        // 节拍段够用：前 N 段结束于 beats[N].time
+        onePass = beatList[imgCount].time * 1000
+      } else {
+        // 节拍段不够：用平均间隔外推，保证每张图片都有展示时间
+        const avgInterval = (beatList[beatList.length - 1].time - beatList[0].time) / beatSegments
+        const extraNeeded = imgCount - beatSegments
+        onePass = (beatList[beatList.length - 1].time + extraNeeded * avgInterval) * 1000
+      }
     } else {
       onePass = engine.getTotalCycleDuration()
     }
@@ -303,13 +310,22 @@ async function handleExport() {
       exportDuration,
     )
     await saveVideoFile(blob)
-  } catch (e) {
-    console.error('导出失败', e)
-    alert('导出失败，请重试')
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg !== 'Export cancelled') {
+      console.error('导出失败', e)
+      alert('导出失败，请重试')
+    }
   } finally {
     isExporting.value = false
     exportProgress.value = 0
   }
+}
+
+function handleCancelExport() {
+  engine.cancelExport()
+  isExporting.value = false
+  exportProgress.value = 0
 }
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -668,12 +684,16 @@ onUnmounted(() => {
             <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
             {{ isPlaying ? '停止' : '播放预览' }}
           </button>
-          <button class="btn-export" :disabled="images.length === 0 || isExporting || isPlaying" @click="handleExport">
-            <span v-if="isExporting" class="spinner" />
-            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <button v-if="!isExporting" class="btn-export" :disabled="images.length === 0 || isPlaying" @click="handleExport">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
             </svg>
-            {{ isExporting ? `${Math.round(exportProgress * 100)}%` : '导出视频' }}
+            导出视频
+          </button>
+          <button v-else class="btn-cancel-export" @click="handleCancelExport">
+            <span class="spinner" />
+            <span>{{ Math.round(exportProgress * 100) }}%</span>
+            <span class="cancel-hint">取消</span>
           </button>
         </div>
       </div>
@@ -980,6 +1000,20 @@ onUnmounted(() => {
 }
 .btn-export:hover:not(:disabled) { background: var(--surface-4); color: var(--text); }
 .btn-export:disabled { opacity: 0.4; cursor: default; }
+
+.btn-cancel-export {
+  display: flex; align-items: center; gap: 6px; padding: 10px 14px;
+  border-radius: var(--r-md); background: rgba(232, 77, 138, 0.12); color: var(--pink);
+  font-size: 12.5px; font-weight: 500; border: 1px solid rgba(232, 77, 138, 0.2);
+  transition: background 0.15s, border-color 0.15s; white-space: nowrap; cursor: pointer;
+}
+.btn-cancel-export:hover {
+  background: rgba(232, 77, 138, 0.2); border-color: rgba(232, 77, 138, 0.4);
+}
+.btn-cancel-export .cancel-hint {
+  font-size: 10px; opacity: 0; transition: opacity 0.15s;
+}
+.btn-cancel-export:hover .cancel-hint { opacity: 1; }
 
 .spinner {
   width: 13px; height: 13px; border: 2px solid rgba(255,255,255,0.2);
