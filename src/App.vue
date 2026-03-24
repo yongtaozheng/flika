@@ -32,6 +32,12 @@ const isDiffusion = computed(() => route.path === '/diffusion')
       <div class="divider" />
 
       <nav class="app-nav">
+        <router-link to="/diffusion" class="nav-item" :class="{ active: isDiffusion }">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" opacity="0.3"/><circle cx="12" cy="12" r="6" opacity="0.5"/><circle cx="12" cy="12" r="2"/>
+          </svg>
+          扩散着色
+        </router-link>
         <!-- 暂时隐藏：踩点动画 -->
         <router-link v-if="false" to="/beat" class="nav-item" :class="{ active: route.path === '/beat' }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -76,12 +82,6 @@ const isDiffusion = computed(() => route.path === '/diffusion')
             <path d="M3 9h18M9 21V9"/>
           </svg>
           封面海报
-        </router-link>
-        <router-link to="/diffusion" class="nav-item" :class="{ active: isDiffusion }">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10" opacity="0.3"/><circle cx="12" cy="12" r="6" opacity="0.5"/><circle cx="12" cy="12" r="2"/>
-          </svg>
-          扩散着色
         </router-link>
       </nav>
 

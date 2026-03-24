@@ -5,7 +5,12 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/filmstrip',
+      redirect: '/diffusion',
+    },
+    {
+      path: '/diffusion',
+      name: 'diffusion',
+      component: () => import('../views/DiffusionPage.vue'),
     },
     {
       path: '/beat',
@@ -36,11 +41,6 @@ const router = createRouter({
       path: '/poster',
       name: 'poster',
       component: () => import('../views/PosterPage.vue'),
-    },
-    {
-      path: '/diffusion',
-      name: 'diffusion',
-      component: () => import('../views/DiffusionPage.vue'),
     },
   ],
 })
