@@ -232,4 +232,6 @@ export interface DiffusionConfig {
   edgeWidth: number
   /** 是否开启涟漪光波效果 */
   rippleEnabled: boolean
+  /** 是否启用踩点模式（根据音乐节拍切换图片） */
+  beatSyncEnabled: boolean
 }

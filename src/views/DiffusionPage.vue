@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { UploadedImage, DiffusionImage, DiffusionConfig } from '../types'
 import { useDiffusionEngine } from '../composables/useDiffusionEngine'
+import { useAudioPlayer } from '../composables/useAudioPlayer'
+import { useBeatDetector } from '../composables/useBeatDetector'
 import { saveVideoFile } from '../utils/filePicker'
 import ImageUploader from '../components/ImageUploader.vue'
+import AudioUploader from '../components/AudioUploader.vue'
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
@@ -17,6 +20,29 @@ const uploaderImages = computed<UploadedImage[]>(() =>
   images.value.map(({ id, file, url, name }) => ({ id, file, url, name })),
 )
 
+// ── Audio & Beat detection ──────────────────────────────────────────────────
+const audioFile = ref<File | null>(null)
+const audioPlayer = useAudioPlayer()
+const { beats, isAnalyzing, progress: analyzeProgress, bpm, analyzeBeats } = useBeatDetector()
+const sensitivity = ref(0.5)
+
+async function handleAudioUpload(file: File) {
+  audioFile.value = file
+  audioPlayer.loadAudio(file)
+  try {
+    await analyzeBeats(file, sensitivity.value)
+  } catch (e) {
+    console.error('节拍分析失败', e)
+  }
+}
+
+let analyzeDebounce: ReturnType<typeof setTimeout> | null = null
+watch(sensitivity, (val) => {
+  if (!audioFile.value) return
+  if (analyzeDebounce) clearTimeout(analyzeDebounce)
+  analyzeDebounce = setTimeout(() => analyzeBeats(audioFile.value!, val), 500)
+})
+
 // ── Config ──────────────────────────────────────────────────────────────────
 const config = reactive<DiffusionConfig>({
   spreadDuration: 3000,
@@ -24,11 +50,12 @@ const config = reactive<DiffusionConfig>({
   loop: true,
   edgeWidth: 30,
   rippleEnabled: true,
+  beatSyncEnabled: false,
 })
 const configRef = computed(() => ({ ...config }))
 
 // ── Engine ──────────────────────────────────────────────────────────────────
-const engine = useDiffusionEngine(canvasRef, images, configRef)
+const engine = useDiffusionEngine(canvasRef, images, configRef, beats)
 
 // ── Editing state ───────────────────────────────────────────────────────────
 const editingMode = ref(false)
@@ -156,32 +183,59 @@ function play() {
   if (images.value.length === 0) return
   isPlaying.value = true
   editingMode.value = false
-  playStartMs = performance.now()
 
-  function loop() {
-    if (!isPlaying.value) return
-    const elapsed = performance.now() - playStartMs
-    playElapsed.value = elapsed
-    engine.renderFrame(elapsed)
+  const useBeatMode = engine.isBeatMode()
 
-    // Check if non-loop playback finished
-    if (!config.loop) {
-      const total = engine.getTotalCycleDuration()
-      if (elapsed >= total) {
-        isPlaying.value = false
-        return
+  if (useBeatMode) {
+    // Beat-sync: drive animation from audio time
+    audioPlayer.seek(0)
+    audioPlayer.play()
+
+    function beatLoop() {
+      if (!isPlaying.value) return
+      const elapsed = audioPlayer.currentTime.value * 1000
+      playElapsed.value = elapsed
+      engine.renderFrame(elapsed)
+
+      // Check if audio ended (non-loop)
+      if (!config.loop) {
+        const total = engine.getTotalCycleDuration()
+        if (elapsed >= total) {
+          stop()
+          return
+        }
       }
+      rafId = requestAnimationFrame(beatLoop)
     }
+    rafId = requestAnimationFrame(beatLoop)
+  } else {
+    // Manual timing: use performance.now()
+    playStartMs = performance.now()
 
-    rafId = requestAnimationFrame(loop)
+    function manualLoop() {
+      if (!isPlaying.value) return
+      const elapsed = performance.now() - playStartMs
+      playElapsed.value = elapsed
+      engine.renderFrame(elapsed)
+
+      if (!config.loop) {
+        const total = engine.getTotalCycleDuration()
+        if (elapsed >= total) {
+          isPlaying.value = false
+          return
+        }
+      }
+      rafId = requestAnimationFrame(manualLoop)
+    }
+    rafId = requestAnimationFrame(manualLoop)
   }
-  rafId = requestAnimationFrame(loop)
 }
 
 function stop() {
   isPlaying.value = false
   playElapsed.value = 0
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
+  audioPlayer.stop()
   if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
   else clearCanvas()
 }
@@ -193,7 +247,8 @@ async function handleExport() {
   exportProgress.value = 0
 
   try {
-    const blob = await engine.exportVideo((p) => { exportProgress.value = p })
+    const audioEl = engine.isBeatMode() ? audioPlayer.audioElement.value : null
+    const blob = await engine.exportVideo((p) => { exportProgress.value = p }, audioEl)
     await saveVideoFile(blob)
   } catch (e) {
     console.error('导出失败', e)
@@ -210,12 +265,14 @@ const statusText = computed(() => {
   if (images.value.length === 0) return '添加图片后开始'
   if (!isPlaying.value) {
     const totalPts = images.value.reduce((s, img) => s + img.points.length, 0)
-    return `${images.value.length} 张图片 · ${totalPts} 个扩散点`
+    const mode = config.beatSyncEnabled && beats.value.length >= 2 ? ' · 踩点模式' : ''
+    return `${images.value.length} 张图片 · ${totalPts} 个扩散点${mode}`
   }
   const info = engine.getPlaybackInfo(playElapsed.value)
+  const modeTag = engine.isBeatMode() ? ' 🎵' : ''
   if (info.phase === 'spreading')
-    return `第 ${info.index + 1}/${images.value.length} 张 · 扩散中 ${Math.round(info.progress * 100)}%`
-  return `第 ${info.index + 1}/${images.value.length} 张 · 停留中`
+    return `第 ${info.index + 1}/${images.value.length} 张 · 扩散中 ${Math.round(info.progress * 100)}%${modeTag}`
+  return `第 ${info.index + 1}/${images.value.length} 张 · 停留中${modeTag}`
 })
 
 const statusPhase = computed(() => {
@@ -289,6 +346,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stop()
+  audioPlayer.cleanup()
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   document.removeEventListener('keydown', onKeydown)
   for (const img of images.value) URL.revokeObjectURL(img.url)
@@ -363,6 +421,53 @@ onUnmounted(() => {
 
     <!-- ── Right: Sidebar ── -->
     <aside class="sidebar">
+
+      <!-- Audio uploader -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+          </svg>
+          <span>音乐踩点</span>
+          <span v-if="beats.length" class="block-badge beat-badge">{{ beats.length }} 拍</span>
+        </div>
+        <AudioUploader @upload="handleAudioUpload" />
+
+        <!-- Beat analysis info -->
+        <template v-if="audioFile">
+          <div v-if="isAnalyzing" class="analyze-bar">
+            <span class="spinner-sm" />
+            <span>分析节拍中… {{ Math.round(analyzeProgress) }}%</span>
+            <div class="analyze-progress">
+              <div class="analyze-fill" :style="{ width: `${analyzeProgress}%` }" />
+            </div>
+          </div>
+          <div v-else-if="beats.length > 0" class="beat-info">
+            <span class="beat-chip">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+              BPM {{ bpm }}
+            </span>
+            <span class="beat-chip">{{ beats.length }} 个节拍</span>
+          </div>
+
+          <!-- Sensitivity -->
+          <div class="setting-row" style="margin-top: 8px;">
+            <label>灵敏度</label>
+            <div class="setting-ctl">
+              <input type="range" min="0" max="1" step="0.05"
+                v-model.number="sensitivity"
+                :style="sliderFill(sensitivity, 0, 1)" />
+              <span class="setting-val">{{ Math.round(sensitivity * 100) }}%</span>
+            </div>
+          </div>
+
+          <!-- Beat-sync toggle -->
+          <label class="loop-toggle" :class="{ disabled: beats.length === 0 }">
+            <input type="checkbox" v-model="config.beatSyncEnabled" :disabled="beats.length === 0" />
+            <span class="loop-label">踩点切换图片</span>
+          </label>
+        </template>
+      </div>
 
       <!-- Image uploader -->
       <div class="sidebar-block">
@@ -898,4 +1003,40 @@ onUnmounted(() => {
 .timing-unit {
   font-size: 10px; color: var(--text-4); flex-shrink: 0;
 }
+
+/* ── Beat / Audio ── */
+.beat-badge {
+  background: rgba(29, 201, 158, 0.15) !important;
+  color: var(--teal) !important;
+}
+
+.analyze-bar {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px; padding: 8px 10px;
+  background: var(--surface-2); border-radius: var(--r-sm);
+  font-size: 11px; color: var(--text-3);
+}
+.spinner-sm {
+  width: 11px; height: 11px; border: 1.5px solid rgba(255,255,255,0.15);
+  border-top-color: var(--teal); border-radius: 50%;
+  animation: spin 0.7s linear infinite; flex-shrink: 0;
+}
+.analyze-progress {
+  flex: 1; height: 3px; background: var(--surface-3); border-radius: 2px; overflow: hidden;
+}
+.analyze-fill {
+  height: 100%; background: var(--teal); border-radius: 2px; transition: width 0.15s;
+}
+
+.beat-info {
+  display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+}
+.beat-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: var(--r-xs);
+  background: rgba(29, 201, 158, 0.1); color: var(--teal);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+}
+
+.loop-toggle.disabled { opacity: 0.4; cursor: default; }
 </style>

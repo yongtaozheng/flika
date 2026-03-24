@@ -1,5 +1,5 @@
 import { type Ref, onUnmounted } from 'vue'
-import type { DiffusionImage, DiffusionConfig } from '../types'
+import type { Beat, DiffusionImage, DiffusionConfig } from '../types'
 
 /* ── Pre-computed data per image ─────────────────────────────────────────── */
 interface PrecomputedData {
@@ -9,6 +9,14 @@ interface PrecomputedData {
   maxDist: number
   width: number
   height: number
+}
+
+/* ── Resolved time-slot info ─────────────────────────────────────────────── */
+interface ResolvedSlot {
+  imageIndex: number
+  imageTime: number
+  /** The spread duration that applies to this slot (may differ from per-image value in beat mode) */
+  effectiveSpreadDuration: number
 }
 
 /* ── Smoothstep helper ───────────────────────────────────────────────────── */
@@ -80,6 +88,7 @@ export function useDiffusionEngine(
   canvasRef: Ref<HTMLCanvasElement | null>,
   imagesRef: Ref<DiffusionImage[]>,
   configRef: Ref<DiffusionConfig>,
+  beatsRef: Ref<Beat[]>,
 ) {
   /* ── Caches ──────────────────────────────────────────────────────────── */
   const imageCache = new Map<string, HTMLImageElement>()
@@ -187,26 +196,26 @@ export function useDiffusionEngine(
     ctx.putImageData(output, 0, 0)
   }
 
-  /* ── Helpers: per-image timing ──────────────────────────────────────── */
-  function getTotalCycleDuration(): number {
-    const images = imagesRef.value
+  /* ── Helpers: per-image timing (manual mode) ─────────────────────────── */
+  function getManualTotalDuration(): number {
     let total = 0
-    for (const img of images) {
+    for (const img of imagesRef.value) {
       total += img.spreadDuration + img.pauseDuration
     }
     return total
   }
 
-  function resolveImageAtTime(effectiveTime: number): {
-    imageIndex: number
-    imageTime: number
-  } {
+  function resolveManual(effectiveTime: number): ResolvedSlot {
     const images = imagesRef.value
     let acc = 0
     for (let i = 0; i < images.length; i++) {
       const imgTotal = images[i].spreadDuration + images[i].pauseDuration
       if (acc + imgTotal > effectiveTime) {
-        return { imageIndex: i, imageTime: effectiveTime - acc }
+        return {
+          imageIndex: i,
+          imageTime: effectiveTime - acc,
+          effectiveSpreadDuration: images[i].spreadDuration,
+        }
       }
       acc += imgTotal
     }
@@ -216,7 +225,69 @@ export function useDiffusionEngine(
     for (let i = 0; i < lastIdx; i++) {
       lastStart += images[i].spreadDuration + images[i].pauseDuration
     }
-    return { imageIndex: lastIdx, imageTime: effectiveTime - lastStart }
+    return {
+      imageIndex: lastIdx,
+      imageTime: effectiveTime - lastStart,
+      effectiveSpreadDuration: images[lastIdx].spreadDuration,
+    }
+  }
+
+  /* ── Helpers: beat-sync mode ─────────────────────────────────────────── */
+  function getBeatTotalDuration(): number {
+    const beats = beatsRef.value
+    if (beats.length < 2) return getManualTotalDuration()
+    // Duration covers all beat segments
+    return beats[beats.length - 1].time * 1000
+  }
+
+  function resolveBeatSync(effectiveTimeMs: number): ResolvedSlot {
+    const beats = beatsRef.value
+    const images = imagesRef.value
+    const imgCount = images.length
+
+    if (beats.length < 2 || imgCount === 0) {
+      return resolveManual(effectiveTimeMs)
+    }
+
+    const effectiveTimeSec = effectiveTimeMs / 1000
+
+    // Find which beat segment we're in
+    for (let i = 0; i < beats.length - 1; i++) {
+      const segStart = beats[i].time
+      const segEnd = beats[i + 1].time
+      if (effectiveTimeSec < segEnd) {
+        const imageIndex = i % imgCount
+        const segDurationMs = (segEnd - segStart) * 1000
+        const imageTimeMs = (effectiveTimeSec - segStart) * 1000
+        return {
+          imageIndex,
+          imageTime: imageTimeMs,
+          effectiveSpreadDuration: segDurationMs,
+        }
+      }
+    }
+
+    // Past the last beat — show last image fully colored
+    const lastBeatIdx = beats.length - 1
+    const imageIndex = lastBeatIdx % imgCount
+    return {
+      imageIndex,
+      imageTime: 0,
+      effectiveSpreadDuration: 1, // effectively fully colored
+    }
+  }
+
+  /* ── Unified resolve / total duration ────────────────────────────────── */
+  function isBeatMode(): boolean {
+    return configRef.value.beatSyncEnabled && beatsRef.value.length >= 2
+  }
+
+  function getTotalCycleDuration(): number {
+    return isBeatMode() ? getBeatTotalDuration() : getManualTotalDuration()
+  }
+
+  function resolveImageAtTime(effectiveTime: number): ResolvedSlot {
+    return isBeatMode() ? resolveBeatSync(effectiveTime) : resolveManual(effectiveTime)
   }
 
   /* ── Core render frame at given elapsed time (ms) ────────────────────── */
@@ -244,8 +315,8 @@ export function useDiffusionEngine(
       effectiveTime = Math.min(elapsedMs, totalCycle - 1)
     }
 
-    // Determine current image and phase (per-image durations)
-    const { imageIndex, imageTime } = resolveImageAtTime(effectiveTime)
+    // Determine current image and phase
+    const { imageIndex, imageTime, effectiveSpreadDuration } = resolveImageAtTime(effectiveTime)
 
     const image = images[imageIndex]
     const data = precomputed.get(image.id)
@@ -255,7 +326,7 @@ export function useDiffusionEngine(
       return
     }
 
-    const spreadProgress = Math.min(1, imageTime / image.spreadDuration)
+    const spreadProgress = Math.min(1, imageTime / effectiveSpreadDuration)
     const currentRadius = spreadProgress * data.maxDist
     const edgeWidth = cfg.edgeWidth
 
@@ -358,14 +429,13 @@ export function useDiffusionEngine(
     const totalCycle = getTotalCycleDuration()
 
     let effectiveTime = cfg.loop ? elapsedMs % totalCycle : Math.min(elapsedMs, totalCycle - 1)
-    const { imageIndex, imageTime } = resolveImageAtTime(effectiveTime)
-    const image = images[imageIndex]
+    const { imageIndex, imageTime, effectiveSpreadDuration } = resolveImageAtTime(effectiveTime)
 
-    if (imageTime <= image.spreadDuration) {
+    if (imageTime <= effectiveSpreadDuration) {
       return {
         index: imageIndex,
         phase: 'spreading' as const,
-        progress: imageTime / image.spreadDuration,
+        progress: imageTime / effectiveSpreadDuration,
       }
     }
     return {
@@ -375,9 +445,10 @@ export function useDiffusionEngine(
     }
   }
 
-  /* ── Export video ────────────────────────────────────────────────────── */
+  /* ── Export video (optional audio mux) ─────────────────────────────────── */
   async function exportVideo(
     onProgress?: (p: number) => void,
+    audioElement?: HTMLAudioElement | null,
   ): Promise<Blob> {
     const canvas = canvasRef.value
     if (!canvas) throw new Error('Canvas not available')
@@ -393,8 +464,30 @@ export function useDiffusionEngine(
       ? 'video/webm;codecs=vp9'
       : 'video/webm'
 
-    const stream = canvas.captureStream(FPS)
-    const recorder = new MediaRecorder(stream, {
+    // Build the combined MediaStream (canvas video + optional audio)
+    const videoStream = canvas.captureStream(FPS)
+    let combinedStream: MediaStream = videoStream
+    let audioCtx: AudioContext | null = null
+
+    if (audioElement && isBeatMode()) {
+      try {
+        audioCtx = new AudioContext()
+        const source = audioCtx.createMediaElementSource(audioElement)
+        const dest = audioCtx.createMediaStreamDestination()
+        source.connect(dest)
+        source.connect(audioCtx.destination) // keep audible for user
+        const audioTracks = dest.stream.getAudioTracks()
+        combinedStream = new MediaStream([
+          ...videoStream.getVideoTracks(),
+          ...audioTracks,
+        ])
+      } catch {
+        // Fallback: video-only (audio element may already be captured)
+        combinedStream = videoStream
+      }
+    }
+
+    const recorder = new MediaRecorder(combinedStream, {
       mimeType,
       videoBitsPerSecond: 5_000_000,
     })
@@ -404,9 +497,19 @@ export function useDiffusionEngine(
       if (e.data.size) chunks.push(e.data)
     }
 
+    // Start audio from beginning if beat-sync export
+    if (audioElement && isBeatMode()) {
+      audioElement.currentTime = 0
+      audioElement.play().catch(() => {})
+    }
+
     return new Promise<Blob>((resolve, reject) => {
       recorder.onerror = reject
-      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+      recorder.onstop = () => {
+        if (audioElement) audioElement.pause()
+        if (audioCtx) audioCtx.close().catch(() => {})
+        resolve(new Blob(chunks, { type: 'video/webm' }))
+      }
       recorder.start()
 
       let elapsed = 0
@@ -442,6 +545,7 @@ export function useDiffusionEngine(
     renderStaticFrame,
     getPlaybackInfo,
     getTotalCycleDuration,
+    isBeatMode,
     exportVideo,
     cleanup,
   }
