@@ -48,6 +48,164 @@ function drawCover(
   ctx.drawImage(el, (cw - dw) / 2, (ch - dh) / 2, dw, dh)
 }
 
+/* ── Bouncing ball constants ────────────────────────────────────────── */
+const BOUNCE_DURATION = 500          // ms — 弹跳动画时长
+const BALL_RADIUS = 12               // px — 小球半径
+const BOUNCE_HEIGHT_RATIO = 0.40     // 弹跳高度 = 两点距离 × 此比率
+const BOUNCE_HEIGHT_MIN = 0.10       // 最小弹跳高度（归一化）
+const LANDING_RIPPLE_DURATION = 400  // ms — 落地波纹持续时间
+const LANDING_RIPPLE_MAX_R = 40      // px — 落地波纹最大半径
+
+interface BallState {
+  /** 上一帧的图片索引 */
+  prevImageIndex: number
+  /** 弹跳起点（归一化坐标） */
+  fromX: number; fromY: number
+  /** 弹跳终点（归一化坐标） */
+  toX: number; toY: number
+  /** 弹跳动画开始时间 (ms) */
+  bounceStartMs: number
+  /** 本次弹跳的实际时长 (ms) */
+  bounceDuration: number
+  /** 是否正在弹跳 */
+  isBouncing: boolean
+  /** 落地波纹开始时间 (ms)，-1 = 无 */
+  landingRippleStart: number
+  /** 落地波纹位置（像素） */
+  landingX: number; landingY: number
+  /** 哪张图片触发了弹跳（防止重复触发），-1 = 无 */
+  bounceTriggerImage: number
+}
+
+/** 获取图片的第一个扩散点坐标（归一化），无点则用画面中心 */
+function getFirstPoint(images: DiffusionImage[], index: number): { x: number; y: number } {
+  const img = images[index]
+  if (img && img.points.length > 0) return { x: img.points[0].x, y: img.points[0].y }
+  return { x: 0.5, y: 0.5 }
+}
+
+/** 绘制弹跳小球 overlay（在 putImageData 之后调用） */
+function drawBouncingBall(
+  ctx: CanvasRenderingContext2D,
+  ball: BallState,
+  elapsedMs: number,
+  imageIndex: number,
+  images: DiffusionImage[],
+  width: number,
+  height: number,
+): void {
+  // 当前停留点
+  const restPt = getFirstPoint(images, imageIndex)
+  let bx: number, by: number
+  let scaleX = 1, scaleY = 1
+
+  if (ball.isBouncing) {
+    const raw = (elapsedMs - ball.bounceStartMs) / ball.bounceDuration
+    const t = Math.max(0, Math.min(1, raw))
+
+    // 线性插值 X/Y
+    bx = ball.fromX + (ball.toX - ball.fromX) * t
+    by = ball.fromY + (ball.toY - ball.fromY) * t
+
+    // 抛物线弧线
+    const dx = ball.toX - ball.fromX
+    const dy = ball.toY - ball.fromY
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    const bounceH = Math.max(BOUNCE_HEIGHT_MIN, dist * BOUNCE_HEIGHT_RATIO)
+    const arc = -bounceH * 4 * t * (1 - t)
+    by += arc
+
+    // 挤压/拉伸
+    const speed = Math.abs(2 * t - 1) // 0=中间最快, 1=端点
+    if (t < 0.15) {
+      // 起跳挤压
+      const s = t / 0.15
+      scaleX = 1 + 0.2 * (1 - s)
+      scaleY = 1 - 0.2 * (1 - s)
+    } else if (t > 0.85) {
+      // 落地挤压
+      const s = (t - 0.85) / 0.15
+      scaleX = 1 + 0.2 * s
+      scaleY = 1 - 0.2 * s
+    } else {
+      // 空中拉伸
+      scaleX = 1 - 0.15 * (1 - speed)
+      scaleY = 1 + 0.15 * (1 - speed)
+    }
+
+    // 弹跳结束
+    if (raw >= 1) {
+      ball.isBouncing = false
+      ball.landingRippleStart = elapsedMs
+      ball.landingX = ball.toX * width
+      ball.landingY = ball.toY * height
+    }
+  } else {
+    if (ball.bounceTriggerImage >= 0) {
+      // 弹跳已完成（停留阶段），停在目标点（下一张图的扩散中心）
+      bx = ball.toX
+      by = ball.toY
+    } else {
+      // 正常停留在当前图片的扩散中心
+      bx = restPt.x
+      by = restPt.y
+    }
+    // 静止时微弱浮动呼吸
+    const breath = Math.sin(elapsedMs / 600) * 0.003
+    by += breath
+  }
+
+  const px = bx * width
+  const py = by * height
+
+  // ── 落地波纹
+  if (ball.landingRippleStart >= 0) {
+    const rt = (elapsedMs - ball.landingRippleStart) / LANDING_RIPPLE_DURATION
+    if (rt >= 0 && rt < 1) {
+      const rippleR = BALL_RADIUS + (LANDING_RIPPLE_MAX_R - BALL_RADIUS) * rt
+      const rippleAlpha = 0.5 * (1 - rt)
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(ball.landingX, ball.landingY, rippleR, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(120, 180, 255, ${rippleAlpha})`
+      ctx.lineWidth = 2 * (1 - rt)
+      ctx.stroke()
+      ctx.restore()
+    } else if (rt >= 1) {
+      ball.landingRippleStart = -1
+    }
+  }
+
+  // ── 小球本体
+  ctx.save()
+  ctx.translate(px, py)
+  ctx.scale(scaleX, scaleY)
+
+  // 发光
+  ctx.shadowColor = 'rgba(100, 160, 255, 0.6)'
+  ctx.shadowBlur = 16
+
+  // 径向渐变
+  const grad = ctx.createRadialGradient(0, -2, 0, 0, 0, BALL_RADIUS)
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)')
+  grad.addColorStop(0.4, 'rgba(180, 210, 255, 0.85)')
+  grad.addColorStop(1, 'rgba(100, 160, 255, 0.6)')
+
+  ctx.beginPath()
+  ctx.arc(0, 0, BALL_RADIUS, 0, Math.PI * 2)
+  ctx.fillStyle = grad
+  ctx.fill()
+
+  // 高光点
+  ctx.shadowBlur = 0
+  ctx.beginPath()
+  ctx.arc(-3, -4, 3, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+  ctx.fill()
+
+  ctx.restore()
+}
+
 /* ═══════════════════════════════════════════════════════════════════════ */
 export function useDiffusionEngine(
   canvasRef: Ref<HTMLCanvasElement | null>,
@@ -64,6 +222,26 @@ export function useDiffusionEngine(
 
   /** 当前活跃的 Worker 导出器（用于取消） */
   let activeExportHandle: WorkerExportHandle | null = null
+
+  /* ── Bouncing ball state ─────────────────────────────────────────── */
+  const ballState: BallState = {
+    prevImageIndex: -1,
+    fromX: 0.5, fromY: 0.5,
+    toX: 0.5, toY: 0.5,
+    bounceStartMs: 0,
+    bounceDuration: BOUNCE_DURATION,
+    isBouncing: false,
+    landingRippleStart: -1,
+    landingX: 0, landingY: 0,
+    bounceTriggerImage: -1,
+  }
+
+  function resetBallState() {
+    ballState.prevImageIndex = -1
+    ballState.isBouncing = false
+    ballState.landingRippleStart = -1
+    ballState.bounceTriggerImage = -1
+  }
 
   function ensureOffscreen(w: number, h: number) {
     if (!offscreen) {
@@ -347,6 +525,46 @@ export function useDiffusionEngine(
       }
       ctx.restore()
     }
+
+    // Bouncing ball overlay
+    if (cfg.bouncingBallEnabled && images.length > 1) {
+      const isLast = imageIndex === images.length - 1
+      const hasNext = cfg.loop || !isLast
+
+      // 计算当前图片槽位总时长和距离切换的剩余时间
+      const slotDuration = isBeatMode()
+        ? effectiveSpreadDuration
+        : (image.spreadDuration + image.pauseDuration)
+      const timeUntilSwitch = slotDuration - imageTime
+
+      // 在距离切换 BOUNCE_DURATION 时触发弹跳，确保小球在扩散前到位
+      // bounceDuration 动态适配：取 BOUNCE_DURATION 和 slotDuration*0.6 的较小值
+      const actualBounceDur = Math.max(200, Math.min(BOUNCE_DURATION, slotDuration * 0.6))
+
+      if (timeUntilSwitch <= actualBounceDur && timeUntilSwitch > 0
+          && hasNext && ballState.bounceTriggerImage !== imageIndex) {
+        const nextIdx = (imageIndex + 1) % images.length
+        const fromPt = getFirstPoint(images, imageIndex)
+        const toPt = getFirstPoint(images, nextIdx)
+        ballState.fromX = fromPt.x
+        ballState.fromY = fromPt.y
+        ballState.toX = toPt.x
+        ballState.toY = toPt.y
+        ballState.bounceStartMs = elapsedMs
+        ballState.bounceDuration = actualBounceDur
+        ballState.isBouncing = true
+        ballState.landingRippleStart = -1
+        ballState.bounceTriggerImage = imageIndex
+      }
+
+      // 图片切换后重置触发标记（新图片开始扩散，小球已就位）
+      if (imageIndex !== ballState.prevImageIndex && ballState.prevImageIndex >= 0) {
+        ballState.bounceTriggerImage = -1
+      }
+      ballState.prevImageIndex = imageIndex
+
+      drawBouncingBall(ctx, ballState, elapsedMs, imageIndex, images, width, height)
+    }
   }
 
   /* ── Playback info (for status bar) ────────────────────────────── */
@@ -519,6 +737,7 @@ export function useDiffusionEngine(
   /* ── Cleanup ───────────────────────────────────────────────────── */
   function cleanup() {
     cancelExport()
+    resetBallState()
     imageCache.clear()
     precomputed.clear()
     offscreen = null
@@ -538,6 +757,7 @@ export function useDiffusionEngine(
     isBeatMode,
     exportVideo,
     cancelExport,
+    resetBallState,
     cleanup,
   }
 }

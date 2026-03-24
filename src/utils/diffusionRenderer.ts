@@ -30,6 +30,7 @@ export interface DiffusionConfigPure {
   edgeWidth: number
   rippleEnabled: boolean
   beatSyncEnabled: boolean
+  bouncingBallEnabled: boolean
 }
 
 export interface BeatPure {

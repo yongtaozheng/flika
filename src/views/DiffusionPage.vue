@@ -56,6 +56,7 @@ const config = reactive<DiffusionConfig>({
   edgeWidth: 30,
   rippleEnabled: true,
   beatSyncEnabled: false,
+  bouncingBallEnabled: false,
 })
 const configRef = computed(() => ({ ...config }))
 
@@ -259,6 +260,7 @@ function stop() {
   playElapsed.value = 0
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
   audioPlayer.stop()
+  engine.resetBallState()
   if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
   else clearCanvas()
 }
@@ -727,6 +729,11 @@ onUnmounted(() => {
         <label class="loop-toggle">
           <input type="checkbox" v-model="config.rippleEnabled" />
           <span class="loop-label">涟漪光波</span>
+        </label>
+
+        <label class="loop-toggle">
+          <input type="checkbox" v-model="config.bouncingBallEnabled" />
+          <span class="loop-label">弹跳小球</span>
         </label>
       </div>
 

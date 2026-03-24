@@ -10,7 +10,7 @@
  */
 
 import type { PrecomputedImageData, DiffusionConfigPure, BeatPure } from '../utils/diffusionRenderer'
-import { WAVE_COUNT, WAVE_WIDTH } from '../utils/diffusionRenderer'
+import { WAVE_COUNT, WAVE_WIDTH, isBeatMode as _isBeatMode, resolveImageAtTime as _resolveImageAtTime } from '../utils/diffusionRenderer'
 import DiffusionRenderWorker from '../workers/diffusionRender.worker?worker'
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -81,6 +81,152 @@ function drawHighlightRings(
   ctx.restore()
 }
 
+/* ── Bouncing ball constants (mirror from useDiffusionEngine) ─────── */
+const BOUNCE_DURATION = 500
+const BALL_RADIUS = 12
+const BOUNCE_HEIGHT_RATIO = 0.40
+const BOUNCE_HEIGHT_MIN = 0.10
+const LANDING_RIPPLE_DURATION = 400
+const LANDING_RIPPLE_MAX_R = 40
+
+interface ExportBallState {
+  prevImageIndex: number
+  fromX: number; fromY: number
+  toX: number; toY: number
+  bounceStartMs: number
+  bounceDuration: number
+  isBouncing: boolean
+  landingRippleStart: number
+  landingX: number; landingY: number
+  bounceTriggerImage: number
+}
+
+function getFirstPointFromImages(
+  images: PrecomputedImageData[],
+  index: number,
+): { x: number; y: number } {
+  const img = images[index]
+  if (img && img.points.length > 0) return { x: img.points[0].x, y: img.points[0].y }
+  return { x: 0.5, y: 0.5 }
+}
+
+/** 导出时绘制弹跳小球 */
+function drawBouncingBallExport(
+  ctx: CanvasRenderingContext2D,
+  ball: ExportBallState,
+  elapsedMs: number,
+  imageIndex: number,
+  imageTime: number,
+  slotDuration: number,
+  images: PrecomputedImageData[],
+  cfgLoop: boolean,
+  width: number,
+  height: number,
+): void {
+  const isLast = imageIndex === images.length - 1
+  const hasNext = cfgLoop || !isLast
+
+  // 计算距离切换的剩余时间
+  const timeUntilSwitch = slotDuration - imageTime
+  const actualBounceDur = Math.max(200, Math.min(BOUNCE_DURATION, slotDuration * 0.6))
+
+  if (timeUntilSwitch <= actualBounceDur && timeUntilSwitch > 0
+      && hasNext && ball.bounceTriggerImage !== imageIndex) {
+    const nextIdx = (imageIndex + 1) % images.length
+    const fromPt = getFirstPointFromImages(images, imageIndex)
+    const toPt = getFirstPointFromImages(images, nextIdx)
+    ball.fromX = fromPt.x; ball.fromY = fromPt.y
+    ball.toX = toPt.x; ball.toY = toPt.y
+    ball.bounceStartMs = elapsedMs
+    ball.bounceDuration = actualBounceDur
+    ball.isBouncing = true
+    ball.landingRippleStart = -1
+    ball.bounceTriggerImage = imageIndex
+  }
+
+  // 图片切换后重置触发标记
+  if (imageIndex !== ball.prevImageIndex && ball.prevImageIndex >= 0) {
+    ball.bounceTriggerImage = -1
+  }
+  ball.prevImageIndex = imageIndex
+
+  const restPt = getFirstPointFromImages(images, imageIndex)
+  let bx: number, by: number
+  let scaleX = 1, scaleY = 1
+
+  if (ball.isBouncing) {
+    const raw = (elapsedMs - ball.bounceStartMs) / ball.bounceDuration
+    const t = Math.max(0, Math.min(1, raw))
+    bx = ball.fromX + (ball.toX - ball.fromX) * t
+    by = ball.fromY + (ball.toY - ball.fromY) * t
+    const dx = ball.toX - ball.fromX
+    const dy = ball.toY - ball.fromY
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    const bounceH = Math.max(BOUNCE_HEIGHT_MIN, dist * BOUNCE_HEIGHT_RATIO)
+    by += -bounceH * 4 * t * (1 - t)
+
+    if (t < 0.15) {
+      const s = t / 0.15; scaleX = 1 + 0.2 * (1 - s); scaleY = 1 - 0.2 * (1 - s)
+    } else if (t > 0.85) {
+      const s = (t - 0.85) / 0.15; scaleX = 1 + 0.2 * s; scaleY = 1 - 0.2 * s
+    } else {
+      const speed = Math.abs(2 * t - 1)
+      scaleX = 1 - 0.15 * (1 - speed); scaleY = 1 + 0.15 * (1 - speed)
+    }
+
+    if (raw >= 1) {
+      ball.isBouncing = false
+      ball.landingRippleStart = elapsedMs
+      ball.landingX = ball.toX * width; ball.landingY = ball.toY * height
+    }
+  } else {
+    if (ball.bounceTriggerImage >= 0) {
+      bx = ball.toX; by = ball.toY
+    } else {
+      bx = restPt.x; by = restPt.y
+    }
+    by += Math.sin(elapsedMs / 600) * 0.003
+  }
+
+  const px = bx * width, py = by * height
+
+  // 落地波纹
+  if (ball.landingRippleStart >= 0) {
+    const rt = (elapsedMs - ball.landingRippleStart) / LANDING_RIPPLE_DURATION
+    if (rt >= 0 && rt < 1) {
+      const rippleR = BALL_RADIUS + (LANDING_RIPPLE_MAX_R - BALL_RADIUS) * rt
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(ball.landingX, ball.landingY, rippleR, 0, Math.PI * 2)
+      ctx.strokeStyle = `rgba(120, 180, 255, ${0.5 * (1 - rt)})`
+      ctx.lineWidth = 2 * (1 - rt)
+      ctx.stroke()
+      ctx.restore()
+    } else if (rt >= 1) { ball.landingRippleStart = -1 }
+  }
+
+  // 小球本体
+  ctx.save()
+  ctx.translate(px, py)
+  ctx.scale(scaleX, scaleY)
+  ctx.shadowColor = 'rgba(100, 160, 255, 0.6)'
+  ctx.shadowBlur = 16
+  const grad = ctx.createRadialGradient(0, -2, 0, 0, 0, BALL_RADIUS)
+  grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)')
+  grad.addColorStop(0.4, 'rgba(180, 210, 255, 0.85)')
+  grad.addColorStop(1, 'rgba(100, 160, 255, 0.6)')
+  ctx.beginPath()
+  ctx.arc(0, 0, BALL_RADIUS, 0, Math.PI * 2)
+  ctx.fillStyle = grad
+  ctx.fill()
+  ctx.shadowBlur = 0
+  ctx.beginPath()
+  ctx.arc(-3, -4, 3, 0, Math.PI * 2)
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
+  ctx.fill()
+  ctx.restore()
+}
+
 /* ── 创建 Worker 导出器 ──────────────────────────────────────────────── */
 export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
   const {
@@ -103,6 +249,19 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
 
   let worker: Worker | null = null
   let cancelled = false
+
+  // Bouncing ball state for export
+  const exportBall: ExportBallState = {
+    prevImageIndex: -1,
+    fromX: 0.5, fromY: 0.5,
+    toX: 0.5, toY: 0.5,
+    bounceStartMs: 0,
+    bounceDuration: BOUNCE_DURATION,
+    isBouncing: false,
+    landingRippleStart: -1,
+    landingX: 0, landingY: 0,
+    bounceTriggerImage: -1,
+  }
 
   function cancel() {
     cancelled = true
@@ -293,6 +452,19 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
           }
         }
 
+        // 叠加弹跳小球
+        if (config.bouncingBallEnabled && images.length > 1) {
+          const frameMs = frame.frameIndex * FRAME_MS
+          const rctx = { images, config, beats, width, height }
+          const beat = _isBeatMode(config, beats)
+          const effectiveMs = config.loop ? frameMs % totalDurationMs : Math.min(frameMs, totalDurationMs - 1)
+          const slot = _resolveImageAtTime(rctx, effectiveMs)
+          const slotDur = beat
+            ? slot.effectiveSpreadDuration
+            : (images[slot.imageIndex].spreadDuration + images[slot.imageIndex].pauseDuration)
+          drawBouncingBallExport(ctx, exportBall, frameMs, frame.imageIndex, slot.imageTime, slotDur, images, config.loop, width, height)
+        }
+
         const nextTarget = playStart + (i + 1) * FRAME_MS
         const delay = Math.max(1, nextTarget - performance.now())
         await sleep(delay)
@@ -420,6 +592,19 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
             if (imgInfo) {
               drawHighlightRings(ctx, imgInfo.points, width, height, latestFrame.currentRadius, latestFrame.animFade)
             }
+          }
+
+          // 叠加弹跳小球
+          if (config.bouncingBallEnabled && images.length > 1) {
+            const frameMs = t * 1000
+            const rctx = { images, config, beats, width, height }
+            const beat = _isBeatMode(config, beats)
+            const effectiveMs = config.loop ? frameMs % totalDurationMs : Math.min(frameMs, totalDurationMs - 1)
+            const slot = _resolveImageAtTime(rctx, effectiveMs)
+            const slotDur = beat
+              ? slot.effectiveSpreadDuration
+              : (images[slot.imageIndex].spreadDuration + images[slot.imageIndex].pauseDuration)
+            drawBouncingBallExport(ctx, exportBall, frameMs, latestFrame.imageIndex, slot.imageTime, slotDur, images, config.loop, width, height)
           }
         }
 

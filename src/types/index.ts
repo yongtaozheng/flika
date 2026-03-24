@@ -234,4 +234,6 @@ export interface DiffusionConfig {
   rippleEnabled: boolean
   /** 是否启用踩点模式（根据音乐节拍切换图片） */
   beatSyncEnabled: boolean
+  /** 是否启用弹跳小球（在扩散中心显示弹跳小球） */
+  bouncingBallEnabled: boolean
 }
