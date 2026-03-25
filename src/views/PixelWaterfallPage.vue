@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { UploadedImage, PixelWaterfallImage, PixelWaterfallConfig } from '../types'
 import { usePixelWaterfallEngine } from '../composables/usePixelWaterfallEngine'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
@@ -8,11 +8,28 @@ import { saveVideoFile } from '../utils/filePicker'
 import { canvasBg } from '../composables/useTheme'
 import ImageUploader from '../components/ImageUploader.vue'
 import AudioUploader from '../components/AudioUploader.vue'
+import { useOrientation } from '../composables/useOrientation'
+import OrientationSelector from '../components/OrientationSelector.vue'
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const CW = 1280
-const CH = 720
+const { orientation, CW, CH, canvasAspectRatio } = useOrientation()
+
+watch(orientation, async () => {
+  if (isPlaying.value) stop()
+  await nextTick()
+  if (canvasRef.value) {
+    canvasRef.value.width = CW.value
+    canvasRef.value.height = CH.value
+  }
+  if (images.value.length > 0) {
+    await engine.preloadImages()
+    engine.precomputeAll()
+    engine.renderStaticFrame(selectedImageIndex.value)
+  } else {
+    clearCanvas()
+  }
+})
 
 // ── Images ──────────────────────────────────────────────────────────────────
 const images = ref<PixelWaterfallImage[]>([])
@@ -76,7 +93,7 @@ let playStartMs = 0
 // ── Canvas helpers ──────────────────────────────────────────────────────────
 function clearCanvas() {
   const c = canvasRef.value?.getContext('2d')
-  if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) }
+  if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) }
 }
 
 // ── Image management ────────────────────────────────────────────────────────
@@ -323,8 +340,8 @@ function applyTimingToAll() {
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
   if (canvasRef.value) {
-    canvasRef.value.width = CW
-    canvasRef.value.height = CH
+    canvasRef.value.width = CW.value
+    canvasRef.value.height = CH.value
     clearCanvas()
   }
   document.addEventListener('fullscreenchange', onFullscreenChange)
@@ -344,30 +361,32 @@ onUnmounted(() => {
   <div class="waterfall-page">
     <!-- ── Left: Canvas preview ── -->
     <div class="preview-col">
-      <div ref="canvasShellRef" class="canvas-shell" :class="{ 'is-fullscreen': isFullscreen }">
-        <canvas
-          ref="canvasRef"
-          :width="CW"
-          :height="CH"
-          class="canvas"
-        />
+      <div class="canvas-wrapper">
+        <div ref="canvasShellRef" class="canvas-shell" :class="{ 'is-fullscreen': isFullscreen }" :style="{ aspectRatio: canvasAspectRatio }">
+          <canvas
+            ref="canvasRef"
+            :width="CW"
+            :height="CH"
+            class="canvas"
+          />
 
-        <!-- Fullscreen toggle -->
-        <button class="fullscreen-btn" @click.stop="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏播放'">
-          <svg v-if="!isFullscreen" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
-          </svg>
-          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
-          </svg>
-        </button>
+          <!-- Fullscreen toggle -->
+          <button class="fullscreen-btn" @click.stop="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏播放'">
+            <svg v-if="!isFullscreen" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          </button>
 
-        <!-- Empty state -->
-        <div v-if="images.length === 0" class="empty-state">
-          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
-            <path d="M12 2v20M17 7l-5-5-5 5" /><path d="M2 17l3 3 3-3" /><path d="M16 17l3 3 3-3" />
-          </svg>
-          <span>添加图片后预览像素瀑布效果</span>
+          <!-- Empty state -->
+          <div v-if="images.length === 0" class="empty-state">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
+              <path d="M12 2v20M17 7l-5-5-5 5" /><path d="M2 17l3 3 3-3" /><path d="M16 17l3 3 3-3" />
+            </svg>
+            <span>添加图片后预览像素瀑布效果</span>
+          </div>
         </div>
       </div>
 
@@ -383,6 +402,17 @@ onUnmounted(() => {
 
     <!-- ── Right: Sidebar ── -->
     <aside class="sidebar">
+
+      <!-- Orientation -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          <span>画布方向</span>
+        </div>
+        <OrientationSelector v-model="orientation" :disabled="isPlaying || isExporting" />
+      </div>
 
       <!-- Audio uploader -->
       <div class="sidebar-block">
@@ -641,18 +671,23 @@ onUnmounted(() => {
   border-right: 1px solid var(--border);
 }
 
-.canvas-shell {
-  position: relative;
+.canvas-wrapper {
   flex: 1;
   min-height: 0;
-  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-shell {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
   background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
   box-shadow: 0 16px 48px rgba(0,0,0,0.3);
-  align-self: center;
-  width: 100%;
 }
 
 .canvas { width: 100%; height: 100%; display: block; }

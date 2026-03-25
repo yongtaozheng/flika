@@ -13,6 +13,9 @@ const props = defineProps<{
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 
+/** CSS aspect-ratio computed from config dimensions */
+const canvasAspectRatio = computed(() => `${props.config.width} / ${props.config.height}`)
+
 const imagesRef = computed(() => props.images)
 const beatsRef = computed(() => props.beats)
 const currentTimeRef = computed(() => props.currentTime)
@@ -87,7 +90,8 @@ defineExpose({ canvasRef, reset, exportVideo })
 <template>
   <div class="preview-root">
     <!-- Canvas -->
-    <div class="canvas-shell">
+    <div class="canvas-wrapper">
+    <div class="canvas-shell" :style="{ aspectRatio: canvasAspectRatio }">
       <canvas
         ref="canvasRef"
         :width="config.width"
@@ -112,6 +116,7 @@ defineExpose({ canvasRef, reset, exportVideo })
         <span>上传图片后预览</span>
       </div>
     </div>
+    </div>
 
     <!-- Beat timeline -->
     <div class="timeline" v-if="beats.length > 0">
@@ -131,16 +136,26 @@ defineExpose({ canvasRef, reset, exportVideo })
 <style scoped>
 .preview-root {
   width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+/* ── Canvas wrapper (flex container for centering) ── */
+.canvas-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ── Canvas shell ── */
 .canvas-shell {
   position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
+  max-width: 100%;
+  max-height: 100%;
   background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import type { SpliceItem, RippleConfig } from '../types'
 import { useRippleTransition, type RippleCenter } from '../composables/useRippleTransition'
 import {
@@ -10,13 +10,27 @@ import {
 } from '../composables/useTransitions'
 import { saveVideoFile } from '../utils/filePicker'
 import { canvasBg } from '../composables/useTheme'
+import { useOrientation } from '../composables/useOrientation'
+import OrientationSelector from '../components/OrientationSelector.vue'
 import { v4 as uuidv4 } from 'uuid';
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
-const CW = 1280
-const CH = 720
+const { orientation, CW, CH, canvasAspectRatio } = useOrientation()
+
+// 切换画布方向
+watch(orientation, async () => {
+  if (isPlaying.value) stop()
+  await nextTick()
+  if (canvasRef.value) {
+    canvasRef.value.width = CW.value
+    canvasRef.value.height = CH.value
+  }
+  const c = getCtx()
+  if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) }
+  if (items.value.length > 0) drawItem(0)
+})
 
 // ── Items & media elements ────────────────────────────────────────────────────
 const items = ref<SpliceItem[]>([])
@@ -77,12 +91,12 @@ const { renderRippleFrame, randomCenter, captureMediaData } = useRippleTransitio
 function getCtx() { return canvasRef.value?.getContext('2d') ?? null }
 
 function drawCover(c: CanvasRenderingContext2D, el: HTMLImageElement | HTMLVideoElement) {
-  c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH)
+  c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value)
   const sw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth
   const sh = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight
   if (!sw || !sh) return
-  const scale = Math.max(CW / sw, CH / sh)
-  c.drawImage(el, (CW - sw * scale) / 2, (CH - sh * scale) / 2, sw * scale, sh * scale)
+  const scale = Math.max(CW.value / sw, CH.value / sh)
+  c.drawImage(el, (CW.value - sw * scale) / 2, (CH.value - sh * scale) / 2, sw * scale, sh * scale)
 }
 
 function drawItem(index: number) {
@@ -93,8 +107,8 @@ function drawItem(index: number) {
 
 function captureItemData(index: number): Uint8ClampedArray {
   const el = mediaMap.get(items.value[index].id)
-  if (!el) return new Uint8ClampedArray(CW * CH * 4)
-  return captureMediaData(el, CW, CH)
+  if (!el) return new Uint8ClampedArray(CW.value * CH.value * 4)
+  return captureMediaData(el, CW.value, CH.value)
 }
 
 // ── Start transition phase ────────────────────────────────────────────────────
@@ -104,7 +118,7 @@ function beginTransition(fromIdx: number, ts: number) {
   if (selectedTransition.value === 'ripple') {
     rippleFromData = captureItemData(fromIdx)
     rippleToData   = captureItemData(fromIdx + 1)
-    rippleCenter   = randomCenter(CW, CH)
+    rippleCenter   = randomCenter(CW.value, CH.value)
   }
   phaseStart = ts
   playState.value = 'transitioning'
@@ -159,7 +173,7 @@ function play() {
 function stop() {
   stopLoop(); isPlaying.value = false; playState.value = 'idle'; currentIndex.value = 0
   if (items.value.length > 0) drawItem(0)
-  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) } }
+  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) } }
 }
 
 // ── File input ────────────────────────────────────────────────────────────────
@@ -206,7 +220,7 @@ function removeItem(id: string) {
   if (item) { URL.revokeObjectURL(item.url); mediaMap.delete(id) }
   items.value = items.value.filter((i) => i.id !== id)
   if (items.value.length > 0) drawItem(0)
-  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH) } }
+  else { const c = getCtx(); if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) } }
 }
 
 // ── Drag sort ─────────────────────────────────────────────────────────────────
@@ -266,7 +280,7 @@ async function handleExport() {
             if (expIdx < items.value.length - 1) {
               if (selectedTransition.value === 'ripple') {
                 expFromData = prerendered[expIdx]; expToData = prerendered[expIdx + 1]
-                expCenter = randomCenter(CW, CH)
+                expCenter = randomCenter(CW.value, CH.value)
               }
               phaseElapsed = 0; expPhase = 'transitioning'
             } else { recorder.stop(); return }
@@ -328,9 +342,9 @@ const catColor: Record<string, string> = {
 
 onMounted(() => {
   if (canvasRef.value) {
-    canvasRef.value.width = CW; canvasRef.value.height = CH
+    canvasRef.value.width = CW.value; canvasRef.value.height = CH.value
     const c = canvasRef.value.getContext('2d')!
-    c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW, CH)
+    c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value)
   }
 })
 
@@ -343,20 +357,22 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
 
     <!-- ── Left: Canvas preview ── -->
     <div class="preview-col">
-      <div class="canvas-shell">
-        <canvas ref="canvasRef" :width="CW" :height="CH" class="canvas" />
-        <div v-if="items.length === 0" class="empty-state">
-          <svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
-            <circle cx="22" cy="22" r="5"/><circle cx="22" cy="22" r="12"/><circle cx="22" cy="22" r="20"/>
-          </svg>
-          <span>添加图片或视频后预览</span>
-        </div>
-        <Transition name="overlay-fade">
-          <div v-if="playState === 'finished'" class="finished-overlay">
-            <span>播放完毕</span>
-            <button class="finished-replay" @click="stop">重置</button>
+      <div class="canvas-wrapper">
+        <div class="canvas-shell" :style="{ aspectRatio: canvasAspectRatio }">
+          <canvas ref="canvasRef" :width="CW" :height="CH" class="canvas" />
+          <div v-if="items.length === 0" class="empty-state">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
+              <circle cx="22" cy="22" r="5"/><circle cx="22" cy="22" r="12"/><circle cx="22" cy="22" r="20"/>
+            </svg>
+            <span>添加图片或视频后预览</span>
           </div>
-        </Transition>
+          <Transition name="overlay-fade">
+            <div v-if="playState === 'finished'" class="finished-overlay">
+              <span>播放完毕</span>
+              <button class="finished-replay" @click="stop">重置</button>
+            </div>
+          </Transition>
+        </div>
       </div>
 
       <div class="status-bar">
@@ -370,6 +386,17 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
 
     <!-- ── Right: Sidebar ── -->
     <aside class="sidebar">
+
+      <!-- 画布方向 -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          <span>画布方向</span>
+        </div>
+        <OrientationSelector v-model="orientation" :disabled="isPlaying || isExporting" />
+      </div>
 
       <!-- Add media -->
       <div class="sidebar-block">
@@ -597,18 +624,23 @@ onUnmounted(() => { stopLoop(); for (const item of items.value) URL.revokeObject
   border-right: 1px solid var(--border);
 }
 
-.canvas-shell {
-  position: relative;
+.canvas-wrapper {
   flex: 1;
   min-height: 0;
-  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-shell {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
   background: var(--canvas-bg);
   border-radius: var(--r-lg);
   overflow: hidden;
   border: 1px solid var(--border);
   box-shadow: 0 16px 48px rgba(0,0,0,0.6);
-  align-self: center;
-  width: 100%;
 }
 
 .canvas { width: 100%; height: 100%; display: block; }

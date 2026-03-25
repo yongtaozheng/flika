@@ -3,15 +3,18 @@ import { ref, reactive, watch } from 'vue'
 import type { UploadedImage, AnimationConfig, EffectConfig } from '../types'
 import { useBeatDetector } from '../composables/useBeatDetector'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
+import { useOrientation } from '../composables/useOrientation'
 import { saveVideoFile } from '../utils/filePicker'
 import AudioUploader from '../components/AudioUploader.vue'
 import ImageUploader from '../components/ImageUploader.vue'
 import AnimationPreview from '../components/AnimationPreview.vue'
 import AnimationControls from '../components/AnimationControls.vue'
+import OrientationSelector from '../components/OrientationSelector.vue'
 
 const images = ref<UploadedImage[]>([])
 const audioFile = ref<File | null>(null)
 const previewRef = ref<InstanceType<typeof AnimationPreview> | null>(null)
+const { orientation, CW, CH } = useOrientation()
 
 const defaultEffects: EffectConfig[] = [
   { type: 'switch',      label: '切换',  description: '节拍时切换到下一张图片',          enabled: true  },
@@ -40,8 +43,14 @@ const config = reactive<AnimationConfig>({
   effectDuration: 200,
   effects: defaultEffects,
   backgroundColor: '#000000',
-  width: 1280,
-  height: 720,
+  width: CW.value,
+  height: CH.value,
+})
+
+// 切换方向时更新画布尺寸
+watch([CW, CH], ([w, h]) => {
+  config.width = w
+  config.height = h
 })
 
 const { beats, isAnalyzing, progress: analyzeProgress, bpm, analyzeBeats } = useBeatDetector()
@@ -165,6 +174,17 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
 
     <!-- ── 右列：控制侧栏 ── -->
     <aside class="sidebar">
+      <!-- 画布方向 -->
+      <div class="sidebar-block">
+        <div class="block-header">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          <span>画布方向</span>
+        </div>
+        <OrientationSelector v-model="orientation" />
+      </div>
+
       <!-- 音乐 -->
       <div class="sidebar-block">
         <div class="block-header">
