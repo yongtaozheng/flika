@@ -349,7 +349,7 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
     const videoStream = canvas.captureStream(fps)
     const recorder = new MediaRecorder(videoStream, {
       mimeType,
-      videoBitsPerSecond: 5_000_000,
+      videoBitsPerSecond: 12_000_000,
     })
 
     const chunks: Blob[] = []
@@ -529,7 +529,7 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
 
     const recorder = new MediaRecorder(combinedStream, {
       mimeType,
-      videoBitsPerSecond: 5_000_000,
+      videoBitsPerSecond: 12_000_000,
     })
 
     const chunks: Blob[] = []

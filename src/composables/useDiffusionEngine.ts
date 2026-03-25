@@ -683,7 +683,7 @@ export function useDiffusionEngine(
 
     const recorder = new MediaRecorder(combinedStream, {
       mimeType,
-      videoBitsPerSecond: 5_000_000,
+      videoBitsPerSecond: 12_000_000,
     })
 
     const chunks: Blob[] = []
@@ -714,8 +714,8 @@ export function useDiffusionEngine(
           recorder.stop()
           return
         }
-        // 以音频当前时间驱动渲染 —— 帧和节拍完美同步
-        renderFrame(t * 1000, 2)
+        // 以音频当前时间驱动渲染 —— 帧和节拍完美同步（step=1 保持原图清晰度）
+        renderFrame(t * 1000, 1)
         onProgress?.(t / totalSec)
         requestAnimationFrame(tick)
       }
