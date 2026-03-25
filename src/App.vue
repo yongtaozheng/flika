@@ -5,12 +5,11 @@ import { useTheme } from './composables/useTheme'
 
 const route = useRoute()
 const { isDark, toggleTheme } = useTheme()
+const isTransition = computed(() => route.path.startsWith('/transition'))
 const isFilmStrip = computed(() => route.path === '/filmstrip')
 const isMusicBall = computed(() => route.path === '/music-ball')
-const isSplice = computed(() => route.path === '/splice')
 const isIntro = computed(() => route.path === '/intro')
 const isPoster = computed(() => route.path === '/poster')
-const isDiffusion = computed(() => route.path === '/diffusion')
 </script>
 
 <template>
@@ -32,18 +31,11 @@ const isDiffusion = computed(() => route.path === '/diffusion')
       <div class="divider" />
 
       <nav class="app-nav">
-        <router-link to="/diffusion" class="nav-item" :class="{ active: isDiffusion }">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10" opacity="0.3"/><circle cx="12" cy="12" r="6" opacity="0.5"/><circle cx="12" cy="12" r="2"/>
-          </svg>
-          扩散着色
-        </router-link>
-        <!-- 暂时隐藏：踩点动画 -->
-        <router-link v-if="false" to="/beat" class="nav-item" :class="{ active: route.path === '/beat' }">
+        <router-link to="/transition" class="nav-item" :class="{ active: isTransition }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
           </svg>
-          踩点动画
+          踩点转场
         </router-link>
         <router-link to="/filmstrip" class="nav-item" :class="{ active: isFilmStrip }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -60,13 +52,6 @@ const isDiffusion = computed(() => route.path === '/diffusion')
             <line x1="9" y1="10" x2="7" y2="15"/><line x1="15" y1="10" x2="17" y2="15"/>
           </svg>
           音乐小球
-        </router-link>
-        <!-- 暂时隐藏：涟漪拼接 -->
-        <router-link v-if="false" to="/splice" class="nav-item" :class="{ active: isSplice }">
-          <svg width="13" height="13" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="3.5">
-            <circle cx="22" cy="22" r="5"/><circle cx="22" cy="22" r="13"/><circle cx="22" cy="22" r="21"/>
-          </svg>
-          涟漪拼接
         </router-link>
         <router-link to="/intro" class="nav-item" :class="{ active: isIntro }">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">

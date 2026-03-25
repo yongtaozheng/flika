@@ -5,17 +5,59 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/diffusion',
+      redirect: '/transition/diffusion',
     },
     {
-      path: '/diffusion',
-      name: 'diffusion',
-      component: () => import('../views/DiffusionPage.vue'),
-    },
-    {
-      path: '/beat',
-      name: 'home',
-      component: () => import('../views/HomePage.vue'),
+      path: '/transition',
+      component: () => import('../views/BeatTransitionLayout.vue'),
+      redirect: '/transition/diffusion',
+      children: [
+        {
+          path: 'diffusion',
+          name: 'diffusion',
+          component: () => import('../views/DiffusionPage.vue'),
+        },
+        {
+          path: 'beat',
+          name: 'beat',
+          component: () => import('../views/HomePage.vue'),
+        },
+        {
+          path: 'splice',
+          name: 'splice',
+          component: () => import('../views/RippleSplicePage.vue'),
+        },
+        {
+          path: 'ink',
+          name: 'ink',
+          component: () => import('../views/InkRenderPage.vue'),
+        },
+        {
+          path: 'collage',
+          name: 'collage',
+          component: () => import('../views/FragmentCollagePage.vue'),
+        },
+        {
+          path: 'waterfall',
+          name: 'waterfall',
+          component: () => import('../views/PixelWaterfallPage.vue'),
+        },
+        {
+          path: 'beam',
+          name: 'beam',
+          component: () => import('../views/RadialBeamPage.vue'),
+        },
+        {
+          path: 'particle',
+          name: 'particle',
+          component: () => import('../views/ParticleReformPage.vue'),
+        },
+        {
+          path: 'kaleidoscope',
+          name: 'kaleidoscope',
+          component: () => import('../views/KaleidoscopePage.vue'),
+        },
+      ],
     },
     {
       path: '/filmstrip',
@@ -26,11 +68,6 @@ const router = createRouter({
       path: '/music-ball',
       name: 'music-ball',
       component: () => import('../views/MusicBallPage.vue'),
-    },
-    {
-      path: '/splice',
-      name: 'splice',
-      component: () => import('../views/RippleSplicePage.vue'),
     },
     {
       path: '/intro',
