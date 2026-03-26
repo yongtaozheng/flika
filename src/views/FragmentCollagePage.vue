@@ -707,7 +707,6 @@ onUnmounted(() => {
   overflow: hidden;
   border: 1px solid var(--border);
   box-shadow: 0 16px 48px rgba(0,0,0,0.3);
-  width: 100%;
 }
 
 .canvas { width: 100%; height: 100%; display: block; }
