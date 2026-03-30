@@ -6,7 +6,7 @@ import { createTracker } from '@jyeontu/web-tracker';
 
 const tracker = createTracker({
   appId: 'flika',
-  reportUrl: 'http://localhost:3003/addVisitRecord',
+  reportUrl: 'http://jyeontu.xyz:3003/addVisitRecord',
 });
 
 // 登录后设置用户标识
