@@ -14,6 +14,8 @@ const tabs = [
   { label: '径向光束', path: '/transition/beam', icon: 'beam' },
   { label: '粒子重组', path: '/transition/particle', icon: 'particle' },
   { label: '万花筒棱镜', path: '/transition/kaleidoscope', icon: 'kaleidoscope' },
+  { label: '雨滴侵蚀', path: '/transition/raindrop', icon: 'raindrop' },
+  { label: '调色板重绘', path: '/transition/palette', icon: 'palette' },
 ]
 
 const activeTab = computed(() => route.path)
@@ -76,6 +78,15 @@ const activeTab = computed(() => route.path)
           <line x1="12" y1="2" x2="12" y2="22" opacity="0.5" />
           <line x1="22" y1="8.5" x2="2" y2="15.5" opacity="0.5" />
           <line x1="2" y1="8.5" x2="22" y2="15.5" opacity="0.5" />
+        </svg>
+        <!-- 雨滴侵蚀 icon -->
+        <svg v-else-if="tab.icon === 'raindrop'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
+        </svg>
+        <!-- 调色板重绘 icon -->
+        <svg v-else-if="tab.icon === 'palette'" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+          <circle cx="7.5" cy="10.5" r="1.5" /><circle cx="10.5" cy="7" r="1.5" /><circle cx="15.5" cy="7" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" />
         </svg>
         {{ tab.label }}
       </router-link>

@@ -449,6 +449,80 @@ export interface KaleidoscopeConfig {
   reflectMode: 'mirror' | 'repeat'
 }
 
+/** 雨滴侵蚀 — 图片 */
+export interface RaindropErosionImage {
+  id: string
+  file: File
+  url: string
+  name: string
+  /** 侵蚀转场时长 (ms) */
+  spreadDuration: number
+  /** 停留时间 (ms) */
+  pauseDuration: number
+}
+
+/** 雨滴侵蚀 — 动画配置 */
+export interface RaindropErosionConfig {
+  /** 雨滴密度 (10-200) */
+  dropDensity: number
+  /** 雨滴最大半径 (5-50) */
+  dropMaxRadius: number
+  /** 下落速度系数 (0.5-3) */
+  fallSpeed: number
+  /** 水痕扩散强度 (0-1) */
+  streakIntensity: number
+  /** 溅射粒子数量 (0-30) */
+  splashCount: number
+  /** 侵蚀模式：natural=自然随机, storm=暴风骤雨, drizzle=细雨绵绵 */
+  erosionMode: 'natural' | 'storm' | 'drizzle'
+  /** 转场时长 (ms) */
+  spreadDuration: number
+  /** 停留时间 (ms) */
+  pauseDuration: number
+  /** 是否循环 */
+  loop: boolean
+  /** 是否启用踩点模式 */
+  beatSyncEnabled: boolean
+  /** 雨滴色调 (hue 0-360)，0 为透明水色 */
+  dropHue: number
+}
+
+/** 调色板重绘 — 图片 */
+export interface PaletteRepaintImage {
+  id: string
+  file: File
+  url: string
+  name: string
+  /** 重绘转场时长 (ms) */
+  spreadDuration: number
+  /** 停留时间 (ms) */
+  pauseDuration: number
+}
+
+/** 调色板重绘 — 动画配置 */
+export interface PaletteRepaintConfig {
+  /** 画笔大小 (10-80 px) */
+  brushSize: number
+  /** 笔触密度 (20-200) — 每次转场的笔触数量 */
+  strokeDensity: number
+  /** 画风模式：watercolor=水彩晕染, oil=油画堆叠, sketch=素描线条 */
+  paintMode: 'watercolor' | 'oil' | 'sketch'
+  /** 笔触速度系数 (0.5-3) */
+  strokeSpeed: number
+  /** 颜色溢出 (0-1) — 笔触边缘的颜色扩散程度 */
+  colorBleed: number
+  /** 转场时长 (ms) */
+  spreadDuration: number
+  /** 停留时间 (ms) */
+  pauseDuration: number
+  /** 是否循环 */
+  loop: boolean
+  /** 是否启用踩点模式 */
+  beatSyncEnabled: boolean
+  /** 画笔色调偏移 (hue 0-360)，0 为原色 */
+  paletteHue: number
+}
+
 /** 扩散着色 — 动画配置 */
 export interface DiffusionConfig {
   /** 扩散完成时长 (ms) */

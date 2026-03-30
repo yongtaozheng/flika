@@ -57,6 +57,16 @@ const router = createRouter({
           name: 'kaleidoscope',
           component: () => import('../views/KaleidoscopePage.vue'),
         },
+        {
+          path: 'raindrop',
+          name: 'raindrop',
+          component: () => import('../views/RaindropErosionPage.vue'),
+        },
+        {
+          path: 'palette',
+          name: 'palette',
+          component: () => import('../views/PaletteRepaintPage.vue'),
+        },
       ],
     },
     {
