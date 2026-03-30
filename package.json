@@ -11,6 +11,7 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@jyeontu/web-tracker": "^1.1.1",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
