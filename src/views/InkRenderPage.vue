@@ -7,6 +7,8 @@ import { useBeatDetector } from '../composables/useBeatDetector'
 import { saveVideoFile } from '../utils/filePicker'
 import ImageUploader from '../components/ImageUploader.vue'
 import AudioUploader from '../components/AudioUploader.vue'
+import { useWaveform } from '../composables/useWaveform'
+import WaveformSelector from '../components/WaveformSelector.vue'
 import { v4 as uuidv4 } from 'uuid'
 import { useOrientation } from '../composables/useOrientation'
 import OrientationSelector from '../components/OrientationSelector.vue'
@@ -42,17 +44,49 @@ const audioFile = ref<File | null>(null)
 const audioPlayer = useAudioPlayer()
 const { beats, isAnalyzing, progress: analyzeProgress, bpm, analyzeBeats } = useBeatDetector()
 const sensitivity = ref(0.5)
+const { waveformData, extractWaveform } = useWaveform()
+const segmentStart = ref(0)
+const segmentEnd = ref(0)
+const segmentLoop = ref(false)
+
+watch([segmentStart, segmentEnd], ([start, end]) => {
+  audioPlayer.setSegment(start, end)
+})
+watch(segmentLoop, (loop) => {
+  audioPlayer.setSegmentLoop(loop)
+})
+
+function resetSegment() {
+  segmentStart.value = 0
+  segmentEnd.value = audioPlayer.duration.value
+}
+
+function formatTime(s: number): string {
+  const m = Math.floor(s / 60)
+  return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`
+}
 
 async function handleAudioUpload(file: File) {
   audioFile.value = file
   audioPlayer.loadAudio(file)
-  try {
-    await analyzeBeats(file, sensitivity.value)
-    if (beats.value.length >= 2) {
-      config.beatSyncEnabled = true
-    }
-  } catch (e) {
-    console.error('节拍分析失败', e)
+
+  const results = await Promise.allSettled([
+    analyzeBeats(file, sensitivity.value),
+    extractWaveform(file),
+  ])
+
+  // Auto-enable beat sync
+  if (results[0].status === 'fulfilled' && beats.value.length >= 2) {
+    config.beatSyncEnabled = true
+  } else if (results[0].status === 'rejected') {
+    console.error('节拍分析失败', results[0].reason)
+  }
+
+  // Initialize segment to full range
+  const wfResult = results[1]
+  if (wfResult.status === 'fulfilled' && wfResult.value) {
+    segmentStart.value = 0
+    segmentEnd.value = wfResult.value.duration
   }
 }
 
@@ -225,7 +259,7 @@ function play() {
   const useBeatMode = engine.isBeatMode()
 
   if (useBeatMode) {
-    audioPlayer.seek(0)
+    audioPlayer.seek(segmentStart.value)
     audioPlayer.play()
 
     function beatLoop() {
@@ -540,6 +574,38 @@ onUnmounted(() => {
           </label>
         </template>
       </div>
+
+      <!-- 片段选取 -->
+      <Transition name="wf-fade">
+        <div class="sidebar-block segment-block" v-if="waveformData">
+          <div class="block-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>片段选取</span>
+            <span class="block-badge segment-badge">
+              {{ formatTime(segmentStart) }} – {{ formatTime(segmentEnd) }}
+            </span>
+          </div>
+          <WaveformSelector
+            :waveform-data="waveformData"
+            :current-time="audioPlayer.currentTime.value"
+            :duration="audioPlayer.duration.value"
+            :segment-start="segmentStart"
+            :segment-end="segmentEnd"
+            @update:segment-start="segmentStart = $event"
+            @update:segment-end="segmentEnd = $event"
+            @seek="(t: number) => audioPlayer.seek(t)"
+          />
+          <div class="segment-controls">
+            <label class="loop-toggle">
+              <input type="checkbox" v-model="segmentLoop" />
+              <span class="loop-label">循环片段</span>
+            </label>
+            <button class="btn-reset-segment" @click="resetSegment">全曲</button>
+          </div>
+        </div>
+      </Transition>
 
       <!-- Image uploader -->
       <div class="sidebar-block">
@@ -1171,4 +1237,21 @@ onUnmounted(() => {
 }
 
 .loop-toggle.disabled { opacity: 0.4; cursor: default; }
+
+/* ── Segment selector ── */
+.segment-badge {
+  font-variant-numeric: tabular-nums;
+}
+.segment-controls {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+}
+.btn-reset-segment {
+  font-size: 11px; font-weight: 500; color: var(--text-3);
+  padding: 3px 10px; border-radius: var(--r-sm);
+  background: var(--surface-3); border: 1px solid var(--border);
+  cursor: pointer; transition: color 0.15s, background 0.15s;
+}
+.btn-reset-segment:hover { color: var(--text-2); background: var(--surface-4); }
+.wf-fade-enter-active, .wf-fade-leave-active { transition: opacity 0.3s, transform 0.3s; }
+.wf-fade-enter-from, .wf-fade-leave-to { opacity: 0; transform: translateY(4px); }
 </style>

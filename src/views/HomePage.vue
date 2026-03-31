@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import type { UploadedImage, AnimationConfig, EffectConfig } from '../types'
 import { useBeatDetector } from '../composables/useBeatDetector'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { useOrientation } from '../composables/useOrientation'
+import { useWaveform } from '../composables/useWaveform'
 import { saveVideoFile } from '../utils/filePicker'
 import AudioUploader from '../components/AudioUploader.vue'
 import ImageUploader from '../components/ImageUploader.vue'
 import AnimationPreview from '../components/AnimationPreview.vue'
 import AnimationControls from '../components/AnimationControls.vue'
 import OrientationSelector from '../components/OrientationSelector.vue'
+import WaveformSelector from '../components/WaveformSelector.vue'
 
 const images = ref<UploadedImage[]>([])
 const audioFile = ref<File | null>(null)
@@ -55,15 +57,51 @@ watch([CW, CH], ([w, h]) => {
 
 const { beats, isAnalyzing, progress: analyzeProgress, bpm, analyzeBeats } = useBeatDetector()
 const audioPlayer = useAudioPlayer()
-const { isPlaying, currentTime, duration, loadAudio, togglePlay, stop, seek } = audioPlayer
+const { isPlaying, currentTime, duration, loadAudio, togglePlay, stop, seek, setSegment, setSegmentLoop } = audioPlayer
+const { waveformData, extractWaveform } = useWaveform()
+
+// ── 片段选区状态 ──
+const segmentStart = ref(0)
+const segmentEnd = ref(0)
+const segmentLoop = ref(false)
+
+// 选区变化同步到 audioPlayer
+watch([segmentStart, segmentEnd], ([start, end]) => {
+  setSegment(start, end)
+})
+
+watch(segmentLoop, (loop) => {
+  setSegmentLoop(loop)
+})
+
+// 只保留选区内的节拍
+const filteredBeats = computed(() => {
+  if (segmentEnd.value <= 0) return beats.value
+  return beats.value.filter(
+    b => b.time >= segmentStart.value && b.time <= segmentEnd.value
+  )
+})
 
 async function handleAudioUpload(file: File) {
   audioFile.value = file
   loadAudio(file)
-  try {
-    await analyzeBeats(file, config.sensitivity)
-  } catch (e) {
-    console.error('分析失败', e)
+
+  // 并行执行节拍分析 + 波形提取
+  const results = await Promise.allSettled([
+    analyzeBeats(file, config.sensitivity),
+    extractWaveform(file),
+  ])
+
+  // 初始化选区为全曲
+  const wfResult = results[1]
+  if (wfResult.status === 'fulfilled' && wfResult.value) {
+    segmentStart.value = 0
+    segmentEnd.value = wfResult.value.duration
+  }
+
+  // 处理分析错误
+  if (results[0].status === 'rejected') {
+    console.error('分析失败', results[0].reason)
   }
 }
 
@@ -100,6 +138,16 @@ function handleSeek(time: number) { seek(time) }
 function handleStop() {
   stop()
   previewRef.value?.reset()
+}
+
+function resetSegment() {
+  segmentStart.value = 0
+  segmentEnd.value = duration.value
+}
+
+function formatTime(s: number): string {
+  const m = Math.floor(s / 60)
+  return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
 
 const isExporting = ref(false)
@@ -144,7 +192,7 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
         <AnimationPreview
           ref="previewRef"
           :images="images"
-          :beats="beats"
+          :beats="filteredBeats"
           :current-time="currentTime"
           :is-playing="isPlaying"
           :config="config"
@@ -196,6 +244,42 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
         <AudioUploader @upload="handleAudioUpload" />
       </div>
 
+      <!-- 片段选取 -->
+      <Transition name="fade">
+        <div class="sidebar-block segment-block" v-if="waveformData">
+          <div class="block-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>片段选取</span>
+            <span class="block-badge segment-badge">
+              {{ formatTime(segmentStart) }} – {{ formatTime(segmentEnd) }}
+            </span>
+          </div>
+
+          <WaveformSelector
+            :waveform-data="waveformData"
+            :current-time="currentTime"
+            :duration="duration"
+            :segment-start="segmentStart"
+            :segment-end="segmentEnd"
+            @update:segment-start="segmentStart = $event"
+            @update:segment-end="segmentEnd = $event"
+            @seek="handleSeek"
+          />
+
+          <div class="segment-controls">
+            <label class="loop-toggle">
+              <input type="checkbox" v-model="segmentLoop" />
+              <span>循环播放</span>
+            </label>
+            <button class="btn-reset-segment" @click="resetSegment">
+              全曲
+            </button>
+          </div>
+        </div>
+      </Transition>
+
       <!-- 图片素材 -->
       <div class="sidebar-block">
         <div class="block-header">
@@ -220,7 +304,7 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
         :current-time="currentTime"
         :duration="duration"
         :bpm="bpm"
-        :beats-count="beats.length"
+        :beats-count="filteredBeats.length"
         :is-analyzing="isAnalyzing"
         :analyze-progress="analyzeProgress"
         :is-exporting="isExporting"
@@ -343,6 +427,52 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
   border-radius: 10px;
   letter-spacing: 0;
   text-transform: none;
+}
+
+.segment-badge {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 片段选取控制行 ── */
+.segment-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.loop-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.loop-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.btn-reset-segment {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  padding: 3px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.btn-reset-segment:hover {
+  color: var(--text-2);
+  background: var(--surface-4);
 }
 
 /* ── Transitions ── */
