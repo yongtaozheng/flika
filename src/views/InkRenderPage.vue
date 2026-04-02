@@ -11,6 +11,7 @@ import { useWaveform } from '../composables/useWaveform'
 import WaveformSelector from '../components/WaveformSelector.vue'
 import { v4 as uuidv4 } from 'uuid'
 import { useOrientation } from '../composables/useOrientation'
+import { canvasBg } from '../composables/useTheme'
 import OrientationSelector from '../components/OrientationSelector.vue'
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
@@ -131,8 +132,14 @@ let playStartMs = 0
 // ── Canvas helpers ──────────────────────────────────────────────────────────
 function clearCanvas() {
   const c = canvasRef.value?.getContext('2d')
-  if (c) { c.fillStyle = 'rgb(245,238,225)'; c.fillRect(0, 0, CW.value, CH.value) }
+  if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) }
 }
+
+watch(canvasBg, () => {
+  if (isPlaying.value) return
+  if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
+  else clearCanvas()
+})
 
 // ── Image management ────────────────────────────────────────────────────────
 function handleImagesAdd(newImgs: UploadedImage[]) {

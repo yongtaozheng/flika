@@ -90,6 +90,18 @@ const { renderRippleFrame, randomCenter, captureMediaData } = useRippleTransitio
 // ── Canvas helpers ────────────────────────────────────────────────────────────
 function getCtx() { return canvasRef.value?.getContext('2d') ?? null }
 
+watch(canvasBg, () => {
+  if (isPlaying.value) return
+  if (items.value.length > 0) drawItem(currentIndex.value)
+  else {
+    const c = getCtx()
+    if (c) {
+      c.fillStyle = canvasBg.value
+      c.fillRect(0, 0, CW.value, CH.value)
+    }
+  }
+})
+
 function drawCover(c: CanvasRenderingContext2D, el: HTMLImageElement | HTMLVideoElement) {
   c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value)
   const sw = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth

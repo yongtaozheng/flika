@@ -135,6 +135,12 @@ function clearCanvas() {
   if (c) { c.fillStyle = canvasBg.value; c.fillRect(0, 0, CW.value, CH.value) }
 }
 
+watch(canvasBg, () => {
+  if (isPlaying.value) return
+  if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
+  else clearCanvas()
+})
+
 // ── Image management ────────────────────────────────────────────────────────
 function handleImagesAdd(newImgs: UploadedImage[]) {
   const kImgs: KaleidoscopeImage[] = newImgs.map((img) => ({

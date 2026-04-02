@@ -5,6 +5,7 @@ import { useBeatDetector } from '../composables/useBeatDetector'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { useOrientation } from '../composables/useOrientation'
 import { useWaveform } from '../composables/useWaveform'
+import { canvasBg } from '../composables/useTheme'
 import { saveVideoFile } from '../utils/filePicker'
 import AudioUploader from '../components/AudioUploader.vue'
 import ImageUploader from '../components/ImageUploader.vue'
@@ -44,7 +45,7 @@ const config = reactive<AnimationConfig>({
   sensitivity: 0.5,
   effectDuration: 200,
   effects: defaultEffects,
-  backgroundColor: '#000000',
+  backgroundColor: canvasBg.value,
   width: CW.value,
   height: CH.value,
 })
@@ -54,6 +55,11 @@ watch([CW, CH], ([w, h]) => {
   config.width = w
   config.height = h
 })
+
+// 主题切换时同步预览/导出背景色，避免必须刷新页面
+watch(canvasBg, (bg) => {
+  config.backgroundColor = bg
+}, { immediate: true })
 
 const { beats, isAnalyzing, progress: analyzeProgress, bpm, analyzeBeats } = useBeatDetector()
 const audioPlayer = useAudioPlayer()
