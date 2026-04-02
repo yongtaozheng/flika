@@ -254,6 +254,8 @@ npm run tauri:build
 
 <img src="http://jyeontu.xyz:3003/viewImage/qrcode.png" width="200" alt="微信交流群" />
 
+群二维码过期的话可以看这里：http://jyeontu.xyz:3003/viewImage/qrcode.png
+
 关注微信公众号获取更多前端创意内容：**前端也能这么有趣**
 
 ---
