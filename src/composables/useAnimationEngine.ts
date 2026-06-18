@@ -1,6 +1,16 @@
 import { ref, type Ref } from 'vue'
 import type { Beat, AnimationEffect, UploadedImage } from '../types'
 
+const BEAT_BLINDS_CELLS = 7
+
+interface BeatBlindsState {
+  sourceIndex: number
+  targetIndex: number
+  revealed: boolean[]
+  activeCell: number
+  activeStartTime: number
+}
+
 /**
  * 动画渲染引擎 composable
  * 基于 Canvas 2D，根据节拍驱动动画效果
@@ -21,6 +31,30 @@ export function useAnimationEngine(
   const activeEffects = ref<Map<AnimationEffect, { startTime: number; strength: number }>>(
     new Map()
   )
+
+  let beatBlindsState: BeatBlindsState = createBeatBlindsState(0)
+
+  function normalizeImageIndex(index: number): number {
+    const total = images.value.length
+    if (total <= 0) return 0
+    return ((index % total) + total) % total
+  }
+
+  function createBeatBlindsState(sourceIndex: number): BeatBlindsState {
+    const normalizedSource = normalizeImageIndex(sourceIndex)
+    const total = images.value.length
+    return {
+      sourceIndex: normalizedSource,
+      targetIndex: total > 1 ? (normalizedSource + 1) % total : normalizedSource,
+      revealed: Array(BEAT_BLINDS_CELLS).fill(false),
+      activeCell: -1,
+      activeStartTime: Number.NEGATIVE_INFINITY,
+    }
+  }
+
+  function resetBeatBlindsState(sourceIndex = currentImageIndex.value) {
+    beatBlindsState = createBeatBlindsState(sourceIndex)
+  }
 
   /**
    * 预加载所有图片到缓存
@@ -50,7 +84,8 @@ export function useAnimationEngine(
    * 查找当前时间最近的节拍
    */
   function findCurrentBeat(time: number, effectDuration: number): Beat | null {
-    for (const beat of beats.value) {
+    for (let i = beats.value.length - 1; i >= 0; i--) {
+      const beat = beats.value[i]
       const diff = time - beat.time
       if (diff >= 0 && diff < effectDuration / 1000) {
         return beat
@@ -67,6 +102,109 @@ export function useAnimationEngine(
     return (currentImageIndex.value + 1) % images.value.length
   }
 
+  function seededUnit(seed: number): number {
+    const x = Math.sin(seed) * 10000
+    return x - Math.floor(x)
+  }
+
+  function pickHiddenBlindCell(beatTime: number): number {
+    const hidden: number[] = []
+    beatBlindsState.revealed.forEach((isRevealed, index) => {
+      if (!isRevealed) hidden.push(index)
+    })
+    if (hidden.length === 0) return -1
+
+    const seed =
+      Math.round(beatTime * 1000)
+      + beatBlindsState.sourceIndex * 101
+      + beatBlindsState.targetIndex * 503
+      + (BEAT_BLINDS_CELLS - hidden.length) * 997
+    return hidden[Math.floor(seededUnit(seed) * hidden.length)]
+  }
+
+  function triggerBeatBlinds(beatTime: number) {
+    if (images.value.length <= 1) return
+
+    const stateInvalid =
+      beatBlindsState.revealed.length !== BEAT_BLINDS_CELLS
+      || beatBlindsState.sourceIndex >= images.value.length
+      || beatBlindsState.targetIndex >= images.value.length
+
+    if (stateInvalid) {
+      resetBeatBlindsState(currentImageIndex.value)
+    }
+
+    if (beatBlindsState.revealed.every(Boolean)) {
+      currentImageIndex.value = beatBlindsState.targetIndex
+      resetBeatBlindsState(currentImageIndex.value)
+    }
+
+    const cell = pickHiddenBlindCell(beatTime)
+    if (cell < 0) return
+
+    beatBlindsState.revealed[cell] = true
+    beatBlindsState.activeCell = cell
+    beatBlindsState.activeStartTime = beatTime
+
+    if (beatBlindsState.revealed.every(Boolean)) {
+      currentImageIndex.value = beatBlindsState.targetIndex
+    }
+  }
+
+  function easeOutCubic(t: number): number {
+    const clamped = Math.max(0, Math.min(1, t))
+    return 1 - Math.pow(1 - clamped, 3)
+  }
+
+  function drawBeatBlindsOverlay(
+    ctx: CanvasRenderingContext2D,
+    nextImgEl: HTMLImageElement,
+    canvasWidth: number,
+    canvasHeight: number,
+    time: number,
+    effectDuration: number,
+  ) {
+    const duration = Math.max(0.001, effectDuration / 1000)
+    const cellWidth = canvasWidth / BEAT_BLINDS_CELLS
+    const imgRatio = nextImgEl.naturalWidth / nextImgEl.naturalHeight
+    const canvasRatio = canvasWidth / canvasHeight
+    const drawWidth = imgRatio > canvasRatio ? canvasHeight * imgRatio : canvasWidth
+    const drawHeight = imgRatio > canvasRatio ? canvasHeight : canvasWidth / imgRatio
+
+    for (let i = 0; i < BEAT_BLINDS_CELLS; i++) {
+      if (!beatBlindsState.revealed[i]) continue
+
+      const cellLeft = -canvasWidth / 2 + i * cellWidth
+      let revealProgress = 1
+
+      if (i === beatBlindsState.activeCell) {
+        revealProgress = easeOutCubic((time - beatBlindsState.activeStartTime) / duration)
+      }
+
+      const visibleWidth = Math.max(1, cellWidth * revealProgress)
+      const visibleLeft = cellLeft + (cellWidth - visibleWidth) / 2
+
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(visibleLeft, -canvasHeight / 2, visibleWidth, canvasHeight)
+      ctx.clip()
+      ctx.drawImage(nextImgEl, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
+      ctx.restore()
+
+      ctx.save()
+      ctx.globalAlpha *= 0.18 * revealProgress
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(cellLeft, -canvasHeight / 2)
+      ctx.lineTo(cellLeft, canvasHeight / 2)
+      ctx.moveTo(cellLeft + cellWidth, -canvasHeight / 2)
+      ctx.lineTo(cellLeft + cellWidth, canvasHeight / 2)
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
   /**
    * 更新效果状态
    */
@@ -75,6 +213,21 @@ export function useAnimationEngine(
     enabledEffects: AnimationEffect[],
     effectDuration: number
   ) {
+    const beatBlindsEnabled = enabledEffects.includes('beatBlinds')
+    const beatBlindsStarted = beatBlindsState.revealed.some(Boolean)
+
+    if (!beatBlindsEnabled && beatBlindsStarted) {
+      resetBeatBlindsState(currentImageIndex.value)
+    }
+
+    if (
+      beatBlindsEnabled
+      && !beatBlindsStarted
+      && beatBlindsState.sourceIndex !== normalizeImageIndex(currentImageIndex.value)
+    ) {
+      resetBeatBlindsState(currentImageIndex.value)
+    }
+
     // 检查当前时间是否有节拍
     const beat = findCurrentBeat(time, effectDuration)
 
@@ -88,11 +241,13 @@ export function useAnimationEngine(
           })
 
           // 如果有切换效果，更新图片索引
-          if (effect === 'switch') {
+          if (effect === 'switch' && !beatBlindsEnabled) {
             const lastSwitch = activeEffects.value.get('switch')
             if (lastSwitch && Math.abs(lastSwitch.startTime - beat.time) < 0.01) {
               currentImageIndex.value = getNextImageIndex()
             }
+          } else if (effect === 'beatBlinds') {
+            triggerBeatBlinds(beat.time)
           }
         }
       }
@@ -188,8 +343,18 @@ export function useAnimationEngine(
       return
     }
 
+    if (currentImageIndex.value >= images.value.length) {
+      currentImageIndex.value = 0
+      resetBeatBlindsState(0)
+    }
+
+    const beatBlindsEnabled = enabledEffects.includes('beatBlinds') && images.value.length > 1
+    const renderImageIndex = beatBlindsEnabled
+      ? normalizeImageIndex(beatBlindsState.sourceIndex)
+      : normalizeImageIndex(currentImageIndex.value)
+
     // 获取当前图片
-    const currentImg = images.value[currentImageIndex.value]
+    const currentImg = images.value[renderImageIndex]
     const imgEl = imageCache.get(currentImg?.id || '')
 
     if (!imgEl) return
@@ -270,6 +435,9 @@ export function useAnimationEngine(
           }
           break
         }
+        case 'beatBlinds':
+          // beatBlinds uses a persistent strip state after the base image draw.
+          break
         case 'split':
           // split 在图片绘制后处理（需要绘制四个象限）
           break
@@ -320,6 +488,21 @@ export function useAnimationEngine(
     // 绘制图片（居中）
     ctx.globalAlpha = opacity
     ctx.drawImage(imgEl, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
+
+    if (beatBlindsEnabled) {
+      const nextImg = images.value[beatBlindsState.targetIndex]
+      const nextImgEl = imageCache.get(nextImg?.id || '')
+      if (nextImgEl) {
+        drawBeatBlindsOverlay(
+          ctx,
+          nextImgEl,
+          width,
+          height,
+          time,
+          effectDuration,
+        )
+      }
+    }
 
     // Flash 效果 - 叠加白色
     const flashP = getEffectProgress('flash', time, effectDuration)
@@ -638,6 +821,7 @@ export function useAnimationEngine(
   function reset() {
     currentImageIndex.value = 0
     activeEffects.value.clear()
+    resetBeatBlindsState(0)
   }
 
   /**

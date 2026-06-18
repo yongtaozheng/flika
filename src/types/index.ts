@@ -9,6 +9,7 @@ export interface Beat {
 /** 动画效果类型 */
 export type AnimationEffect =
   | 'switch'      // 切换图片
+  | 'beatBlinds'  // 百叶窗竖列切换
   | 'zoom'        // 缩放脉冲
   | 'rotate'      // 旋转
   | 'shake'       // 抖动

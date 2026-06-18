@@ -21,6 +21,7 @@ const { orientation, CW, CH } = useOrientation()
 
 const defaultEffects: EffectConfig[] = [
   { type: 'switch',      label: '切换',  description: '节拍时切换到下一张图片',          enabled: true  },
+  { type: 'beatBlinds',  label: '百叶',  description: '节拍时随机翻开 7 列替换下一张图', enabled: false },
   { type: 'zoom',        label: '缩放',  description: '节拍时图片缩放脉冲',              enabled: true  },
   { type: 'flash',       label: '闪白',  description: '节拍时短暂闪白',                  enabled: false },
   { type: 'rotate',      label: '旋转',  description: '节拍时轻微旋转',                  enabled: false },

@@ -66,7 +66,7 @@ function toggleEffect(index: number) {
 // ── Effect categories ──
 const effectCat: Record<string, string> = {
   zoom: 'motion', bounce: 'motion', shake: 'motion', heartbeat: 'motion', rotate: 'motion',
-  switch: 'transition', slide: 'transition', fadeIn: 'transition', flipX: 'transition', blur: 'transition',
+  switch: 'transition', beatBlinds: 'transition', slide: 'transition', fadeIn: 'transition', flipX: 'transition', blur: 'transition',
   glitch: 'distort', vortex: 'distort', chromatic: 'distort', wave: 'distort', split: 'distort', pixelate: 'distort',
   flash: 'color', colorInvert: 'color', neonGlow: 'color',
 }
