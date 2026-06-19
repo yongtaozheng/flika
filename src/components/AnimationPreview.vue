@@ -33,6 +33,11 @@ const enabledEffects = computed<AnimationEffect[]>(() =>
   props.config.effects.filter((e) => e.enabled).map((e) => e.type)
 )
 
+const beatBlindsOptions = computed(() => ({
+  direction: props.config.beatBlindsDirection,
+  count: props.config.beatBlindsCount,
+}))
+
 watch(() => props.images, async () => { await preloadImages(); renderOnce() }, { deep: true })
 watch(() => props.isPlaying, (playing) => {
   if (playing) startRenderLoop()
@@ -42,12 +47,24 @@ watch(() => props.currentTime, () => { if (!props.isPlaying) renderOnce() })
 watch(() => props.config, () => { if (!props.isPlaying) renderOnce() }, { deep: true })
 
 function renderOnce() {
-  renderFrame(enabledEffects.value, props.config.effectDuration, props.config.backgroundColor)
+  renderFrame(
+    enabledEffects.value,
+    props.config.effectDuration,
+    props.config.backgroundColor,
+    undefined,
+    beatBlindsOptions.value,
+  )
 }
 
 function startRenderLoop() {
   function loop() {
-    renderFrame(enabledEffects.value, props.config.effectDuration, props.config.backgroundColor)
+    renderFrame(
+      enabledEffects.value,
+      props.config.effectDuration,
+      props.config.backgroundColor,
+      undefined,
+      beatBlindsOptions.value,
+    )
     animationId = requestAnimationFrame(loop)
   }
   loop()

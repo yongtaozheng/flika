@@ -1,11 +1,21 @@
 import { ref, type Ref } from 'vue'
-import type { Beat, AnimationEffect, UploadedImage } from '../types'
+import type { Beat, AnimationEffect, BeatBlindsDirection, UploadedImage } from '../types'
 
-const BEAT_BLINDS_CELLS = 7
+interface BeatBlindsOptions {
+  direction: BeatBlindsDirection
+  count: number
+}
+
+const DEFAULT_BEAT_BLINDS_OPTIONS: BeatBlindsOptions = {
+  direction: 'vertical',
+  count: 7,
+}
 
 interface BeatBlindsState {
   sourceIndex: number
   targetIndex: number
+  direction: BeatBlindsDirection
+  count: number
   revealed: boolean[]
   activeCell: number
   activeStartTime: number
@@ -32,7 +42,14 @@ export function useAnimationEngine(
     new Map()
   )
 
-  let beatBlindsState: BeatBlindsState = createBeatBlindsState(0)
+  let beatBlindsState: BeatBlindsState = createBeatBlindsState(0, DEFAULT_BEAT_BLINDS_OPTIONS)
+
+  function normalizeBeatBlindsOptions(options?: Partial<BeatBlindsOptions>): BeatBlindsOptions {
+    return {
+      direction: options?.direction ?? DEFAULT_BEAT_BLINDS_OPTIONS.direction,
+      count: Math.max(2, Math.min(20, Math.round(options?.count ?? DEFAULT_BEAT_BLINDS_OPTIONS.count))),
+    }
+  }
 
   function normalizeImageIndex(index: number): number {
     const total = images.value.length
@@ -40,20 +57,28 @@ export function useAnimationEngine(
     return ((index % total) + total) % total
   }
 
-  function createBeatBlindsState(sourceIndex: number): BeatBlindsState {
+  function createBeatBlindsState(
+    sourceIndex: number,
+    options: BeatBlindsOptions = DEFAULT_BEAT_BLINDS_OPTIONS,
+  ): BeatBlindsState {
     const normalizedSource = normalizeImageIndex(sourceIndex)
     const total = images.value.length
     return {
       sourceIndex: normalizedSource,
       targetIndex: total > 1 ? (normalizedSource + 1) % total : normalizedSource,
-      revealed: Array(BEAT_BLINDS_CELLS).fill(false),
+      direction: options.direction,
+      count: options.count,
+      revealed: Array(options.count).fill(false),
       activeCell: -1,
       activeStartTime: Number.NEGATIVE_INFINITY,
     }
   }
 
-  function resetBeatBlindsState(sourceIndex = currentImageIndex.value) {
-    beatBlindsState = createBeatBlindsState(sourceIndex)
+  function resetBeatBlindsState(
+    sourceIndex = currentImageIndex.value,
+    options: BeatBlindsOptions = DEFAULT_BEAT_BLINDS_OPTIONS,
+  ) {
+    beatBlindsState = createBeatBlindsState(sourceIndex, options)
   }
 
   /**
@@ -118,25 +143,29 @@ export function useAnimationEngine(
       Math.round(beatTime * 1000)
       + beatBlindsState.sourceIndex * 101
       + beatBlindsState.targetIndex * 503
-      + (BEAT_BLINDS_CELLS - hidden.length) * 997
+      + beatBlindsState.count * 211
+      + (beatBlindsState.direction === 'vertical' ? 307 : 613)
+      + (beatBlindsState.count - hidden.length) * 997
     return hidden[Math.floor(seededUnit(seed) * hidden.length)]
   }
 
-  function triggerBeatBlinds(beatTime: number) {
+  function triggerBeatBlinds(beatTime: number, options: BeatBlindsOptions) {
     if (images.value.length <= 1) return
 
     const stateInvalid =
-      beatBlindsState.revealed.length !== BEAT_BLINDS_CELLS
+      beatBlindsState.revealed.length !== options.count
+      || beatBlindsState.count !== options.count
+      || beatBlindsState.direction !== options.direction
       || beatBlindsState.sourceIndex >= images.value.length
       || beatBlindsState.targetIndex >= images.value.length
 
     if (stateInvalid) {
-      resetBeatBlindsState(currentImageIndex.value)
+      resetBeatBlindsState(currentImageIndex.value, options)
     }
 
     if (beatBlindsState.revealed.every(Boolean)) {
       currentImageIndex.value = beatBlindsState.targetIndex
-      resetBeatBlindsState(currentImageIndex.value)
+      resetBeatBlindsState(currentImageIndex.value, options)
     }
 
     const cell = pickHiddenBlindCell(beatTime)
@@ -165,28 +194,33 @@ export function useAnimationEngine(
     effectDuration: number,
   ) {
     const duration = Math.max(0.001, effectDuration / 1000)
-    const cellWidth = canvasWidth / BEAT_BLINDS_CELLS
     const imgRatio = nextImgEl.naturalWidth / nextImgEl.naturalHeight
     const canvasRatio = canvasWidth / canvasHeight
     const drawWidth = imgRatio > canvasRatio ? canvasHeight * imgRatio : canvasWidth
     const drawHeight = imgRatio > canvasRatio ? canvasHeight : canvasWidth / imgRatio
 
-    for (let i = 0; i < BEAT_BLINDS_CELLS; i++) {
+    for (let i = 0; i < beatBlindsState.count; i++) {
       if (!beatBlindsState.revealed[i]) continue
 
-      const cellLeft = -canvasWidth / 2 + i * cellWidth
       let revealProgress = 1
 
       if (i === beatBlindsState.activeCell) {
         revealProgress = easeOutCubic((time - beatBlindsState.activeStartTime) / duration)
       }
 
-      const visibleWidth = Math.max(1, cellWidth * revealProgress)
-      const visibleLeft = cellLeft + (cellWidth - visibleWidth) / 2
+      const isVertical = beatBlindsState.direction === 'vertical'
+      const cellSize = (isVertical ? canvasWidth : canvasHeight) / beatBlindsState.count
+      const cellStart = -(isVertical ? canvasWidth : canvasHeight) / 2 + i * cellSize
+      const visibleSize = Math.max(1, cellSize * revealProgress)
+      const visibleStart = cellStart + (cellSize - visibleSize) / 2
 
       ctx.save()
       ctx.beginPath()
-      ctx.rect(visibleLeft, -canvasHeight / 2, visibleWidth, canvasHeight)
+      if (isVertical) {
+        ctx.rect(visibleStart, -canvasHeight / 2, visibleSize, canvasHeight)
+      } else {
+        ctx.rect(-canvasWidth / 2, visibleStart, canvasWidth, visibleSize)
+      }
       ctx.clip()
       ctx.drawImage(nextImgEl, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
       ctx.restore()
@@ -196,10 +230,17 @@ export function useAnimationEngine(
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(cellLeft, -canvasHeight / 2)
-      ctx.lineTo(cellLeft, canvasHeight / 2)
-      ctx.moveTo(cellLeft + cellWidth, -canvasHeight / 2)
-      ctx.lineTo(cellLeft + cellWidth, canvasHeight / 2)
+      if (isVertical) {
+        ctx.moveTo(cellStart, -canvasHeight / 2)
+        ctx.lineTo(cellStart, canvasHeight / 2)
+        ctx.moveTo(cellStart + cellSize, -canvasHeight / 2)
+        ctx.lineTo(cellStart + cellSize, canvasHeight / 2)
+      } else {
+        ctx.moveTo(-canvasWidth / 2, cellStart)
+        ctx.lineTo(canvasWidth / 2, cellStart)
+        ctx.moveTo(-canvasWidth / 2, cellStart + cellSize)
+        ctx.lineTo(canvasWidth / 2, cellStart + cellSize)
+      }
       ctx.stroke()
       ctx.restore()
     }
@@ -211,21 +252,27 @@ export function useAnimationEngine(
   function updateEffects(
     time: number,
     enabledEffects: AnimationEffect[],
-    effectDuration: number
+    effectDuration: number,
+    beatBlindsOptions: BeatBlindsOptions,
   ) {
     const beatBlindsEnabled = enabledEffects.includes('beatBlinds')
     const beatBlindsStarted = beatBlindsState.revealed.some(Boolean)
+    const beatBlindsConfigChanged =
+      beatBlindsState.count !== beatBlindsOptions.count
+      || beatBlindsState.direction !== beatBlindsOptions.direction
 
     if (!beatBlindsEnabled && beatBlindsStarted) {
-      resetBeatBlindsState(currentImageIndex.value)
+      resetBeatBlindsState(currentImageIndex.value, beatBlindsOptions)
     }
 
     if (
       beatBlindsEnabled
-      && !beatBlindsStarted
-      && beatBlindsState.sourceIndex !== normalizeImageIndex(currentImageIndex.value)
+      && (
+        beatBlindsState.sourceIndex !== normalizeImageIndex(currentImageIndex.value)
+        || beatBlindsConfigChanged
+      )
     ) {
-      resetBeatBlindsState(currentImageIndex.value)
+      resetBeatBlindsState(currentImageIndex.value, beatBlindsOptions)
     }
 
     // 检查当前时间是否有节拍
@@ -247,7 +294,7 @@ export function useAnimationEngine(
               currentImageIndex.value = getNextImageIndex()
             }
           } else if (effect === 'beatBlinds') {
-            triggerBeatBlinds(beat.time)
+            triggerBeatBlinds(beat.time, beatBlindsOptions)
           }
         }
       }
@@ -314,7 +361,8 @@ export function useAnimationEngine(
     enabledEffects: AnimationEffect[],
     effectDuration: number,
     backgroundColor: string,
-    overrideTime?: number
+    overrideTime?: number,
+    beatBlindsOptionsInput?: Partial<BeatBlindsOptions>,
   ) {
     const canvas = canvasRef.value
     if (!canvas) return
@@ -325,9 +373,10 @@ export function useAnimationEngine(
     const width = canvas.width
     const height = canvas.height
     const time = overrideTime !== undefined ? overrideTime : currentTime.value
+    const beatBlindsOptions = normalizeBeatBlindsOptions(beatBlindsOptionsInput)
 
     // 更新效果
-    updateEffects(time, enabledEffects, effectDuration)
+    updateEffects(time, enabledEffects, effectDuration, beatBlindsOptions)
 
     // 清除画布
     ctx.fillStyle = backgroundColor
@@ -345,7 +394,7 @@ export function useAnimationEngine(
 
     if (currentImageIndex.value >= images.value.length) {
       currentImageIndex.value = 0
-      resetBeatBlindsState(0)
+      resetBeatBlindsState(0, beatBlindsOptions)
     }
 
     const beatBlindsEnabled = enabledEffects.includes('beatBlinds') && images.value.length > 1
@@ -835,6 +884,7 @@ export function useAnimationEngine(
     effectDuration: number,
     backgroundColor: string,
     fps: number,
+    beatBlindsOptions: BeatBlindsOptions,
     onProgress?: (progress: number) => void
   ): Promise<Blob> {
     const {
@@ -882,7 +932,7 @@ export function useAnimationEngine(
     reset()
     for (let i = 0; i < totalFrames; i++) {
       const frameTime = i * frameDuration
-      renderFrame(enabledEffects, effectDuration, backgroundColor, frameTime)
+      renderFrame(enabledEffects, effectDuration, backgroundColor, frameTime, beatBlindsOptions)
       await videoSource.add(frameTime, frameDuration)
 
       if (onProgress) {
@@ -910,6 +960,7 @@ export function useAnimationEngine(
     effectDuration: number,
     backgroundColor: string,
     fps: number,
+    beatBlindsOptions: BeatBlindsOptions,
     onProgress?: (progress: number) => void
   ): Promise<Blob> {
     const stream = canvas.captureStream(fps)
@@ -964,7 +1015,13 @@ export function useAnimationEngine(
 
       const renderLoop = () => {
         if (!exportAudio.paused && !exportAudio.ended) {
-          renderFrame(enabledEffects, effectDuration, backgroundColor)
+          renderFrame(
+            enabledEffects,
+            effectDuration,
+            backgroundColor,
+            exportAudio.currentTime,
+            beatBlindsOptions,
+          )
           if (onProgress) {
             onProgress(exportAudio.currentTime / exportAudio.duration)
           }
@@ -988,6 +1045,7 @@ export function useAnimationEngine(
     effectDuration: number,
     backgroundColor: string,
     audioFile?: File,
+    beatBlindsOptionsInput?: Partial<BeatBlindsOptions>,
     fps: number = 30,
     onProgress?: (progress: number) => void
   ): Promise<Blob> {
@@ -998,19 +1056,20 @@ export function useAnimationEngine(
 
     try {
       await preloadImages()
+      const beatBlindsOptions = normalizeBeatBlindsOptions(beatBlindsOptionsInput)
 
       // 优先使用 WebCodecs + mediabunny 导出 MP4（需要原始音频 File）
       if (typeof VideoEncoder !== 'undefined' && audioFile) {
         return await exportAsMP4(
           canvas, audioFile, enabledEffects, effectDuration,
-          backgroundColor, fps, onProgress
+          backgroundColor, fps, beatBlindsOptions, onProgress
         )
       }
 
       // 降级到 WebM (MediaRecorder) — 仅当 WebCodecs 不可用时
       return await exportAsWebM(
         canvas, audioElement, enabledEffects, effectDuration,
-        backgroundColor, fps, onProgress
+        backgroundColor, fps, beatBlindsOptions, onProgress
       )
     } finally {
       isRendering.value = false

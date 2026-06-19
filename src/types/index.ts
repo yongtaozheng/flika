@@ -9,7 +9,7 @@ export interface Beat {
 /** 动画效果类型 */
 export type AnimationEffect =
   | 'switch'      // 切换图片
-  | 'beatBlinds'  // 百叶窗竖列切换
+  | 'beatBlinds'  // 百叶窗切块切换
   | 'zoom'        // 缩放脉冲
   | 'rotate'      // 旋转
   | 'shake'       // 抖动
@@ -28,6 +28,8 @@ export type AnimationEffect =
   | 'split'       // 四象限分裂
   | 'neonGlow'    // 霓虹发光边框
   | 'heartbeat'   // 心跳双脉冲
+
+export type BeatBlindsDirection = 'vertical' | 'horizontal'
 
 /** 动画效果配置 */
 export interface EffectConfig {
@@ -62,6 +64,10 @@ export interface AnimationConfig {
   sensitivity: number
   /** 动画效果持续时间（ms） */
   effectDuration: number
+  /** 百叶窗切块方向 */
+  beatBlindsDirection: BeatBlindsDirection
+  /** 百叶窗切块数量 */
+  beatBlindsCount: number
   /** 启用的效果 */
   effects: EffectConfig[]
   /** 背景颜色 */

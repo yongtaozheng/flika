@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { AnimationConfig } from '../types'
+import type { AnimationConfig, BeatBlindsDirection } from '../types'
 
 const props = defineProps<{
   config: AnimationConfig
@@ -32,6 +32,10 @@ const progressPct = computed(() =>
   props.duration > 0 ? (props.currentTime / props.duration) * 100 : 0
 )
 
+const beatBlindsEnabled = computed(() =>
+  props.config.effects.some((effect) => effect.type === 'beatBlinds' && effect.enabled)
+)
+
 // ── Seekbar drag ──
 const seekbarRef = ref<HTMLElement | null>(null)
 
@@ -61,6 +65,15 @@ function toggleEffect(index: number) {
   const effects = [...props.config.effects]
   effects[index] = { ...effects[index], enabled: !effects[index].enabled }
   updateConfig({ effects })
+}
+
+function setBeatBlindsDirection(direction: BeatBlindsDirection) {
+  updateConfig({ beatBlindsDirection: direction })
+}
+
+function setBeatBlindsCount(value: number) {
+  const count = Math.max(2, Math.min(20, Math.round(value)))
+  updateConfig({ beatBlindsCount: count })
 }
 
 // ── Effect categories ──
@@ -207,6 +220,47 @@ function sliderFill(value: number, min: number, max: number) {
           class="slider"
           @input="updateConfig({ effectDuration: Number(($event.target as HTMLInputElement).value) })"
         />
+      </div>
+
+      <div v-if="beatBlindsEnabled" class="effect-option-group">
+        <div class="param-row">
+          <div class="param-header">
+            <span>百叶方向</span>
+            <span class="param-val">{{ config.beatBlindsDirection === 'vertical' ? '竖向' : '横向' }}</span>
+          </div>
+          <div class="segmented-control">
+            <button
+              class="segment-btn"
+              :class="{ active: config.beatBlindsDirection === 'vertical' }"
+              title="按竖向列切块"
+              @click="setBeatBlindsDirection('vertical')"
+            >
+              竖向
+            </button>
+            <button
+              class="segment-btn"
+              :class="{ active: config.beatBlindsDirection === 'horizontal' }"
+              title="按横向行切块"
+              @click="setBeatBlindsDirection('horizontal')"
+            >
+              横向
+            </button>
+          </div>
+        </div>
+
+        <div class="param-row">
+          <div class="param-header">
+            <span>切块数量</span>
+            <span class="param-val">{{ config.beatBlindsCount }}片</span>
+          </div>
+          <input
+            type="range" min="2" max="20" step="1"
+            :value="config.beatBlindsCount"
+            :style="sliderFill(config.beatBlindsCount, 2, 20)"
+            class="slider"
+            @input="setBeatBlindsCount(Number(($event.target as HTMLInputElement).value))"
+          />
+        </div>
       </div>
     </div>
 
@@ -444,6 +498,12 @@ function sliderFill(value: number, min: number, max: number) {
 .param-row { margin-bottom: 14px; }
 .param-row:last-child { margin-bottom: 0; }
 
+.effect-option-group {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 .param-header {
   display: flex;
   justify-content: space-between;
@@ -457,6 +517,36 @@ function sliderFill(value: number, min: number, max: number) {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.segment-btn {
+  height: 28px;
+  border-radius: calc(var(--r-sm) - 2px);
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.13s, color 0.13s, box-shadow 0.13s;
+}
+
+.segment-btn:hover {
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+
+.segment-btn.active {
+  color: var(--teal);
+  background: var(--teal-dim);
+  box-shadow: inset 0 0 0 1px rgba(29,201,158,0.28);
 }
 
 .slider {
