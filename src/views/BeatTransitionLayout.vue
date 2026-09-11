@@ -112,12 +112,18 @@ const activeTab = computed(() => route.path)
   align-items: center;
   gap: 2px;
   padding: 0 20px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
+.sub-tabs::-webkit-scrollbar { display: none; }
+
 .sub-tab {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 5px 14px;
@@ -152,6 +158,49 @@ const activeTab = computed(() => route.path)
 
 .sub-content {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+}
+
+@media (max-width: 760px) {
+  .beat-transition-layout {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .sub-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: 44px;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 0 12px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sub-tabs::-webkit-scrollbar { display: none; }
+
+  .sub-tab {
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 7px 12px;
+    font-size: 12.5px;
+  }
+
+  .sub-tab.active::after {
+    bottom: -5px;
+    left: 12px;
+    right: 12px;
+  }
+
+  .sub-content {
+    flex: none;
+    min-height: calc(100dvh - 136px);
+    overflow: visible;
+  }
 }
 </style>

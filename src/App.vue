@@ -232,6 +232,66 @@ const isPoster = computed(() => route.path === '/poster')
 
 .app-body {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    height: auto;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "brand spacer actions"
+      "nav nav nav";
+    gap: 6px 10px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 0;
+  }
+
+  .brand { grid-area: brand; }
+  .divider { display: none; }
+
+  .app-nav {
+    grid-area: nav;
+    min-width: 0;
+    width: 100%;
+    gap: 4px;
+    padding-bottom: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-nav::-webkit-scrollbar { display: none; }
+
+  .nav-item {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 7px 12px;
+    font-size: 13px;
+  }
+
+  .header-right {
+    grid-area: actions;
+    margin-left: 0;
+  }
+
+  .theme-toggle,
+  .source-link {
+    width: 36px;
+    height: 36px;
+  }
+
+  .app-body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 480px) {
+  .source-link { display: none; }
 }
 </style>
