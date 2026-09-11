@@ -152,3 +152,284 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+/* ── Compact / touch layouts ─────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  html,
+  body,
+  #app {
+    width: 100%;
+    height: 100dvh;
+  }
+
+  body {
+    min-width: 0;
+    overscroll-behavior: none;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 40px;
+    font-size: 16px !important;
+  }
+
+  #app :is(
+    .home-page,
+    .diffusion-page,
+    .splice-page,
+    .ink-page,
+    .fragment-page,
+    .waterfall-page,
+    .beam-page,
+    .particle-page,
+    .kaleidoscope-page,
+    .raindrop-page,
+    .palette-page,
+    .intro-page,
+    .poster-page
+  ) {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  #app :is(
+    .home-page,
+    .diffusion-page,
+    .splice-page,
+    .ink-page,
+    .fragment-page,
+    .waterfall-page,
+    .beam-page,
+    .particle-page,
+    .kaleidoscope-page,
+    .raindrop-page,
+    .palette-page,
+    .intro-page,
+    .poster-page
+  ) > .preview-col {
+    order: 0;
+    flex: none;
+    width: 100%;
+    min-height: 0;
+    padding: 16px;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #app :is(
+    .home-page,
+    .diffusion-page,
+    .splice-page,
+    .ink-page,
+    .fragment-page,
+    .waterfall-page,
+    .beam-page,
+    .particle-page,
+    .kaleidoscope-page,
+    .raindrop-page,
+    .palette-page,
+    .intro-page,
+    .poster-page
+  ) > .sidebar {
+    order: 1;
+    flex: none;
+    width: 100%;
+    overflow: visible;
+    border-left: 0;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+
+  #app :is(
+    .diffusion-page,
+    .splice-page,
+    .ink-page,
+    .fragment-page,
+    .waterfall-page,
+    .beam-page,
+    .particle-page,
+    .kaleidoscope-page,
+    .raindrop-page,
+    .palette-page,
+    .poster-page
+  ) > .preview-col > .canvas-wrapper {
+    flex: none;
+    width: 100%;
+    min-height: 0;
+  }
+
+  #app :is(
+    .diffusion-page,
+    .splice-page,
+    .ink-page,
+    .fragment-page,
+    .waterfall-page,
+    .beam-page,
+    .particle-page,
+    .kaleidoscope-page,
+    .raindrop-page,
+    .palette-page,
+    .poster-page
+  ) .canvas-shell:not(.is-fullscreen) {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
+
+  #app .home-page > .preview-col > .preview-wrap {
+    display: block;
+    flex: none;
+    width: 100%;
+  }
+
+  #app .home-page .preview-root {
+    height: auto;
+  }
+
+  #app .home-page .preview-root > .canvas-wrapper {
+    flex: none;
+    width: 100%;
+  }
+
+  #app .home-page .canvas-shell {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
+
+  #app .home-page .steps-bar {
+    max-width: 100%;
+    gap: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  #app .home-page .steps-bar::-webkit-scrollbar { display: none; }
+  #app .home-page .step { flex: 0 0 auto; }
+
+  #app .intro-page .canvas-shell {
+    flex: none;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  #app .intro-page .timeline-row,
+  #app .poster-page .export-bar {
+    flex-wrap: wrap;
+  }
+
+  #app .intro-page .timeline-row .export-btn {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  #app .poster-page .export-bar .export-btn {
+    flex: 1 1 130px;
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  #app .poster-page .size-hint {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: center;
+  }
+
+  #app .fullscreen-btn {
+    width: 40px;
+    height: 40px;
+    opacity: 1;
+  }
+
+  #app .filmstrip-page {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  #app .filmstrip-page .page-layout {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    min-height: 100%;
+  }
+
+  #app .filmstrip-page .film-stage {
+    order: -1;
+    flex: none;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  #app .filmstrip-page .canvas-area {
+    height: auto;
+    min-height: 0;
+    padding: 16px;
+  }
+
+  #app .filmstrip-page .canvas-wrap {
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+  }
+
+  #app .filmstrip-page .sidebar {
+    flex: none;
+    width: 100%;
+    overflow: visible;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-right: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  #app .filmstrip-page .sidebar-inner {
+    padding: 18px 16px max(28px, env(safe-area-inset-bottom));
+  }
+
+  #app .filmstrip-page .reel-deco {
+    display: none;
+  }
+
+  #app .music-ball-page {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  #app .music-ball-page .canvas-wrapper {
+    min-height: min(70vw, 360px);
+  }
+
+  #app .music-ball-page .side-panel {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (max-width: 420px) {
+  #app .effects-grid,
+  #app .transition-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  #app .status-bar {
+    padding-inline: 10px;
+  }
+}
