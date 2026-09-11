@@ -112,21 +112,34 @@ onMounted(() => {
 
 onUnmounted(() => {
   resizeObserver?.disconnect()
+  stopDragging()
 })
 
 // ── 拖拽逻辑 ──
 let dragType: 'start' | 'end' | null = null
+let activePointerId: number | null = null
 
-function handleMouseDown(type: 'start' | 'end', e: MouseEvent) {
+function handlePointerDown(type: 'start' | 'end', e: PointerEvent) {
+  if (activePointerId !== null) return
+
   dragType = type
+  activePointerId = e.pointerId
   e.preventDefault()
   e.stopPropagation()
-  window.addEventListener('mousemove', handleMouseMove)
-  window.addEventListener('mouseup', handleMouseUp)
+
+  // 捕获当前指针，手指移出手柄后仍能连续更新选区
+  const handle = e.currentTarget as HTMLElement
+  handle.setPointerCapture?.(e.pointerId)
+
+  window.addEventListener('pointermove', handlePointerMove, { passive: false })
+  window.addEventListener('pointerup', handlePointerEnd)
+  window.addEventListener('pointercancel', handlePointerEnd)
 }
 
-function handleMouseMove(e: MouseEvent) {
-  if (!containerRef.value || !dragType) return
+function handlePointerMove(e: PointerEvent) {
+  if (!containerRef.value || !dragType || e.pointerId !== activePointerId) return
+
+  e.preventDefault()
   const rect = containerRef.value.getBoundingClientRect()
   const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
   const time = +(pct * props.duration).toFixed(2)
@@ -142,10 +155,17 @@ function handleMouseMove(e: MouseEvent) {
   }
 }
 
-function handleMouseUp() {
+function handlePointerEnd(e: PointerEvent) {
+  if (activePointerId !== null && e.pointerId !== activePointerId) return
+  stopDragging()
+}
+
+function stopDragging() {
   dragType = null
-  window.removeEventListener('mousemove', handleMouseMove)
-  window.removeEventListener('mouseup', handleMouseUp)
+  activePointerId = null
+  window.removeEventListener('pointermove', handlePointerMove)
+  window.removeEventListener('pointerup', handlePointerEnd)
+  window.removeEventListener('pointercancel', handlePointerEnd)
 }
 
 // ── 点击波形跳转 ──
@@ -181,7 +201,8 @@ function handleContainerClick(e: MouseEvent) {
     <div
       class="handle handle-start"
       :style="{ left: `${startPct}%` }"
-      @mousedown.stop="handleMouseDown('start', $event)"
+      @pointerdown="handlePointerDown('start', $event)"
+      @click.stop
     >
       <div class="handle-bar" />
       <div class="handle-knob" />
@@ -192,7 +213,8 @@ function handleContainerClick(e: MouseEvent) {
     <div
       class="handle handle-end"
       :style="{ left: `${endPct}%` }"
-      @mousedown.stop="handleMouseDown('end', $event)"
+      @pointerdown="handlePointerDown('end', $event)"
+      @click.stop
     >
       <div class="handle-bar" />
       <div class="handle-knob" />
@@ -213,6 +235,7 @@ function handleContainerClick(e: MouseEvent) {
   border: 1px solid var(--border);
   cursor: pointer;
   user-select: none;
+  touch-action: pan-y;
   overflow: hidden;
 }
 
@@ -250,12 +273,16 @@ function handleContainerClick(e: MouseEvent) {
 .handle {
   position: absolute;
   top: 0;
+  width: 44px;
   height: 100%;
   z-index: 3;
   cursor: ew-resize;
   display: flex;
   flex-direction: column;
   align-items: center;
+  touch-action: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .handle-start { transform: translateX(-50%); }
@@ -287,6 +314,15 @@ function handleContainerClick(e: MouseEvent) {
 .handle:hover .handle-knob {
   transform: translateY(-50%) scale(1.15);
   box-shadow: 0 0 0 2px var(--surface-2), 0 0 12px rgba(112, 96, 255, 0.6);
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .handle-bar { width: 4px; }
+
+  .handle-knob {
+    width: 18px;
+    height: 18px;
+  }
 }
 
 .handle-time {
