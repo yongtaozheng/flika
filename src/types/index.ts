@@ -342,44 +342,6 @@ export interface PixelWaterfallConfig {
   trailEnabled: boolean
 }
 
-/** 径向光束 — 图片 */
-export interface RadialBeamImage {
-  id: string
-  file: File
-  url: string
-  name: string
-  /** 光束扫描时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-}
-
-/** 径向光束 — 动画配置 */
-export interface RadialBeamConfig {
-  /** 光束数量 (4-24) */
-  beamCount: number
-  /** 旋转速度系数 (0.5-3) */
-  rotationSpeed: number
-  /** 光束辉光强度 (0-1) */
-  glowIntensity: number
-  /** 光束角宽度比例 (0.1-0.8)，占扇区的比例 */
-  beamWidth: number
-  /** 光束中心 X 坐标 (0-1 归一化) */
-  centerX: number
-  /** 光束中心 Y 坐标 (0-1 归一化) */
-  centerY: number
-  /** 光束扫描时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-  /** 是否循环 */
-  loop: boolean
-  /** 是否启用踩点模式 */
-  beatSyncEnabled: boolean
-  /** 光束颜色色调 (hue 0-360) */
-  beamHue: number
-}
-
 /** 粒子重组 — 图片 */
 export interface ParticleImage {
   id: string
@@ -414,46 +376,6 @@ export interface ParticleConfig {
   glowEnabled: boolean
   /** 色调偏移 (0-360)，0 为原色 */
   hueShift: number
-}
-
-/** 万花筒棱镜 — 图片 */
-export interface KaleidoscopeImage {
-  id: string
-  file: File
-  url: string
-  name: string
-  /** 万花筒转场时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-}
-
-/** 万花筒棱镜 — 动画配置 */
-export interface KaleidoscopeConfig {
-  /** 万花筒分片数量 (3-12) */
-  segments: number
-  /** 旋转速度系数 (0-3) */
-  rotationSpeed: number
-  /** 源图缩放 (0.5-3) */
-  zoom: number
-  /** 棱镜彩虹边缘强度 (0-1) */
-  prismIntensity: number
-  /** 万花筒中心 X (0-1) */
-  centerX: number
-  /** 万花筒中心 Y (0-1) */
-  centerY: number
-  /** 转场时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-  /** 是否循环 */
-  loop: boolean
-  /** 是否启用踩点模式 */
-  beatSyncEnabled: boolean
-  /** 棱镜色调 (hue 0-360) */
-  prismHue: number
-  /** 镜像反射模式: mirror=镜像翻转, repeat=平铺重复 */
-  reflectMode: 'mirror' | 'repeat'
 }
 
 /** 雨滴侵蚀 — 图片 */
@@ -492,42 +414,6 @@ export interface RaindropErosionConfig {
   beatSyncEnabled: boolean
   /** 雨滴色调 (hue 0-360)，0 为透明水色 */
   dropHue: number
-}
-
-/** 调色板重绘 — 图片 */
-export interface PaletteRepaintImage {
-  id: string
-  file: File
-  url: string
-  name: string
-  /** 重绘转场时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-}
-
-/** 调色板重绘 — 动画配置 */
-export interface PaletteRepaintConfig {
-  /** 画笔大小 (10-80 px) */
-  brushSize: number
-  /** 笔触密度 (20-200) — 每次转场的笔触数量 */
-  strokeDensity: number
-  /** 画风模式：watercolor=水彩晕染, oil=油画堆叠, sketch=素描线条 */
-  paintMode: 'watercolor' | 'oil' | 'sketch'
-  /** 笔触速度系数 (0.5-3) */
-  strokeSpeed: number
-  /** 颜色溢出 (0-1) — 笔触边缘的颜色扩散程度 */
-  colorBleed: number
-  /** 转场时长 (ms) */
-  spreadDuration: number
-  /** 停留时间 (ms) */
-  pauseDuration: number
-  /** 是否循环 */
-  loop: boolean
-  /** 是否启用踩点模式 */
-  beatSyncEnabled: boolean
-  /** 画笔色调偏移 (hue 0-360)，0 为原色 */
-  paletteHue: number
 }
 
 /** 扩散着色 — 动画配置 */
