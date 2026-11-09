@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CreatePosterButton from '../components/CreatePosterButton.vue'
 import { ref, reactive, computed, watch } from 'vue'
 import type { UploadedImage, AnimationConfig, EffectConfig } from '../types'
 import { useBeatDetector } from '../composables/useBeatDetector'
@@ -327,6 +328,10 @@ watch(images, (v) => { hasImages.value = v.length > 0 }, { deep: true })
         @seek="handleSeek"
         @export="handleExport"
       />
+      <div class="sidebar-block">
+        <CreatePosterButton :canvas="previewRef?.canvasRef ?? null" :disabled="!hasImages || isExporting" />
+      </div>
+
     </aside>
   </div>
 </template>

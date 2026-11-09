@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CreatePosterButton from '../components/CreatePosterButton.vue'
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { UploadedImage } from '../types'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
@@ -567,6 +568,7 @@ onUnmounted(() => {
               </svg>
               {{ isExporting ? `导出 ${Math.round(exportProgress * 100)}%` : '导出 WebM 视频' }}
             </button>
+            <CreatePosterButton :canvas="canvasRef" :disabled="!activeCols.some((_c, i) => hasContent(i)) || isExporting" />
             <div v-if="isExporting" class="export-progress">
               <div class="export-fill" :style="{ width: `${exportProgress * 100}%` }"></div>
             </div>

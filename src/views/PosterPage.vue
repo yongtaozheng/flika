@@ -1,1137 +1,2565 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { PosterConfig, PosterRatio } from '../types'
 import { usePosterEngine } from '../composables/usePosterEngine'
 import { saveImageFile } from '../utils/filePicker'
+import {
+  applyPosterTemplate,
+  createPosterConfig,
+  POSTER_CATEGORIES,
+  POSTER_DIMS,
+  POSTER_FONTS,
+  POSTER_TEMPLATES,
+  type PosterTemplate,
+} from '../utils/posterTemplates'
+import {
+  copyPoster,
+  readPosterStorage,
+  writePosterStorage,
+  type PosterDraft,
+  type SavedPosterTemplate,
+} from '../utils/posterStorage'
+import { mediaFrame, type PosterSelection } from '../utils/posterRenderer'
+import coastUrl from '../assets/poster/coast.jpg'
 
-// ─── Canvas dims ────────────────────────────────────────────────────────────
-
-const RATIO_DIMS: Record<PosterRatio, [number, number]> = {
-  '16:9': [1920, 1080],
-  '9:16': [1080, 1920],
-  '1:1':  [1080, 1080],
-  '4:3':  [1440, 1080],
-}
-
-// ─── Templates ──────────────────────────────────────────────────────────────
-
-interface TplText {
-  x: number; y: number
-  fontSize: number; fontWeight: string
-  textAlign: 'left' | 'center' | 'right'
-  color: string
-  shadowColor: string; shadowBlur: number
-  strokeColor?: string; strokeWidth?: number
-}
-interface TplLogo { x: number; y: number; size: number }
-
-interface PosterTemplate {
-  id: string
-  name: string
-  tag: string           // platform tag
-  desc: string
-  bgColor: string
-  bgColorEnd: string
-  lightBg: boolean      // true = light background, need dark marks in swatch
-  title: TplText
-  subtitle: TplText
-  logo: TplLogo
-}
-
-const TEMPLATES: PosterTemplate[] = [
-  // ── 小红书 ────────────────────────────────────────────────────────────────
-
-  // ① 热辣橙红 — 高饱和橙红渐变，白色大字，美食/生活类爆款
-  {
-    id: 'xhs-orange',
-    name: '热辣橙红',
-    tag: '小红书',
-    desc: '高饱和橙红 · 白字冲击',
-    bgColor: '#ff4500', bgColorEnd: '#ff9000', lightBg: false,
-    logo:     { x: 0.5,  y: 0.17, size: 0.10 },
-    title:    { x: 0.5,  y: 0.47, fontSize: 104, fontWeight: 'bold',   textAlign: 'center', color: '#ffffff',      shadowColor: 'rgba(0,0,0,0.4)',        shadowBlur: 18, strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.5,  y: 0.63, fontSize: 38,  fontWeight: 'normal', textAlign: 'center', color: 'rgba(255,255,255,0.9)',  shadowColor: 'rgba(0,0,0,0.3)',        shadowBlur: 8  },
-  },
-  // ② 薰衣草 — 浅紫粉渐变，深紫文字，美妆/穿搭/治愈系
-  {
-    id: 'xhs-lavender',
-    name: '薰衣草',
-    tag: '小红书',
-    desc: '柔和紫粉 · 深色文字',
-    bgColor: '#e8d5f8', bgColorEnd: '#f8d0e8', lightBg: true,
-    logo:     { x: 0.5,  y: 0.18, size: 0.11 },
-    title:    { x: 0.5,  y: 0.47, fontSize: 90,  fontWeight: 'bold',   textAlign: 'center', color: '#3a1060',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0,  strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.5,  y: 0.63, fontSize: 34,  fontWeight: 'normal', textAlign: 'center', color: '#7840a8',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0  },
-  },
-  // ③ 柠檬黄 — 鲜亮黄色，深色左对齐大字，美食/好物推荐爆款
-  {
-    id: 'xhs-yellow',
-    name: '柠檬黄',
-    tag: '小红书',
-    desc: '鲜亮黄 · 左对齐大字',
-    bgColor: '#ffe000', bgColorEnd: '#ffb300', lightBg: true,
-    logo:     { x: 0.9,  y: 0.12, size: 0.07 },
-    title:    { x: 0.08, y: 0.44, fontSize: 108, fontWeight: 'bold',   textAlign: 'left',   color: '#1a0800',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0,  strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.08, y: 0.62, fontSize: 36,  fontWeight: 'normal', textAlign: 'left',   color: '#4a2800',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0  },
-  },
-  // ④ 清新绿 — 薄荷渐变，图上字下，健身/健康/自然内容
-  {
-    id: 'xhs-mint',
-    name: '清新薄荷',
-    tag: '小红书',
-    desc: '薄荷绿 · 图大字沉底',
-    bgColor: '#d0f4e0', bgColorEnd: '#a8e8c8', lightBg: true,
-    logo:     { x: 0.5,  y: 0.29, size: 0.22 },
-    title:    { x: 0.5,  y: 0.73, fontSize: 84,  fontWeight: 'bold',   textAlign: 'center', color: '#0d3d20',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0,  strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.5,  y: 0.86, fontSize: 30,  fontWeight: 'normal', textAlign: 'center', color: '#2d7a50',      shadowColor: 'rgba(0,0,0,0)',          shadowBlur: 0  },
-  },
-
-  // ── B站 ──────────────────────────────────────────────────────────────────
-
-  // ⑤ 赛博霓虹 — 深黑底+青/品红霓虹，游戏/科技/二次元
-  {
-    id: 'bili-neon',
-    name: '赛博霓虹',
-    tag: 'B站',
-    desc: '深黑 · 青色标题 · 品红副标题',
-    bgColor: '#040210', bgColorEnd: '#0c0528', lightBg: false,
-    logo:     { x: 0.1,  y: 0.13, size: 0.09 },
-    title:    { x: 0.07, y: 0.45, fontSize: 96,  fontWeight: 'bold',   textAlign: 'left',   color: '#00f5e0',      shadowColor: 'rgba(0,245,224,0.9)',    shadowBlur: 40, strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.07, y: 0.62, fontSize: 34,  fontWeight: 'normal', textAlign: 'left',   color: '#ff38b0',      shadowColor: 'rgba(255,56,176,0.7)',   shadowBlur: 20 },
-  },
-  // ⑥ 番剧感 — 深紫底，白字粉光，居中，动漫/剧情内容
-  {
-    id: 'bili-anime',
-    name: '番剧感',
-    tag: 'B站',
-    desc: '深紫底 · 白字粉光 · 居中',
-    bgColor: '#0c0015', bgColorEnd: '#1e0035', lightBg: false,
-    logo:     { x: 0.5,  y: 0.18, size: 0.12 },
-    title:    { x: 0.5,  y: 0.52, fontSize: 90,  fontWeight: 'bold',   textAlign: 'center', color: '#ffffff',      shadowColor: 'rgba(255,100,200,0.85)', shadowBlur: 38, strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.5,  y: 0.67, fontSize: 30,  fontWeight: 'normal', textAlign: 'center', color: '#ff80c8',      shadowColor: 'rgba(255,80,180,0.6)',   shadowBlur: 16 },
-  },
-  // ⑦ 知识区 — 深海蓝，黄色左对齐标题，蓝色副标题，教程/知识/测评
-  {
-    id: 'bili-edu',
-    name: '知识区',
-    tag: 'B站',
-    desc: '深海蓝 · 黄标题 · 蓝副标题',
-    bgColor: '#010c1e', bgColorEnd: '#021a38', lightBg: false,
-    logo:     { x: 0.1,  y: 0.14, size: 0.09 },
-    title:    { x: 0.07, y: 0.43, fontSize: 94,  fontWeight: 'bold',   textAlign: 'left',   color: '#ffd740',      shadowColor: 'rgba(255,215,64,0.8)',   shadowBlur: 32, strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.07, y: 0.61, fontSize: 32,  fontWeight: 'normal', textAlign: 'left',   color: '#82b4ff',      shadowColor: 'rgba(100,160,255,0.6)',  shadowBlur: 14 },
-  },
-  // ⑧ 美食Vlog — 暖棕底，奶油黄居中，字上图下，生活/美食类
-  {
-    id: 'bili-vlog',
-    name: '生活Vlog',
-    tag: 'B站',
-    desc: '暖棕底 · 奶油字 · 字上图下',
-    bgColor: '#100804', bgColorEnd: '#201408', lightBg: false,
-    logo:     { x: 0.5,  y: 0.68, size: 0.22 },
-    title:    { x: 0.5,  y: 0.2,  fontSize: 86,  fontWeight: 'bold',   textAlign: 'center', color: '#ffe0a0',      shadowColor: 'rgba(255,180,60,0.75)',  shadowBlur: 30, strokeColor: '#000', strokeWidth: 0 },
-    subtitle: { x: 0.5,  y: 0.34, fontSize: 32,  fontWeight: 'normal', textAlign: 'center', color: 'rgba(255,215,150,0.72)', shadowColor: 'rgba(180,100,20,0.5)',   shadowBlur: 10 },
-  },
-]
-
-// SVG layout-mark helpers (used in swatch preview)
-function tBarW(fontSize: number) { return Math.min(72, Math.max(28, fontSize / 2.2)) }
-function tBarX(align: string, x: number, w: number) {
-  if (align === 'left')  return Math.max(2, x * 100)
-  if (align === 'right') return Math.min(98 - w, x * 100 - w)
-  return Math.max(2, Math.min(98 - w, x * 100 - w / 2))
-}
-
-// ─── Config ─────────────────────────────────────────────────────────────────
-
-const config = reactive<PosterConfig>({
-  ratio: '16:9',
-  bgType: 'color',
-  bgFile: null,
-  bgUrl: '',
-  bgOverlayOpacity: 0.4,
-  bgColor: '#0d0d1a',
-  bgColorEnd: '#1a0d2e',
-  bgVideoTime: 0,
-  title: {
-    text: '我的封面标题',
-    fontSize: 96,
-    fontWeight: 'bold',
-    fontStyle: 'normal',
-    color: '#ffffff',
-    x: 0.5,
-    y: 0.45,
-    textAlign: 'center',
-    shadowColor: 'rgba(168,152,255,0.8)',
-    shadowBlur: 30,
-    strokeColor: '#000000',
-    strokeWidth: 0,
-  },
-  subtitle: {
-    text: 'Flika · 副标题',
-    fontSize: 36,
-    fontWeight: 'normal',
-    fontStyle: 'normal',
-    color: 'rgba(255,255,255,0.7)',
-    x: 0.5,
-    y: 0.6,
-    textAlign: 'center',
-    shadowColor: 'rgba(0,0,0,0.6)',
-    shadowBlur: 10,
-    strokeColor: '#000000',
-    strokeWidth: 0,
-  },
-  logo: {
-    file: null,
-    url: '',
-    size: 0.15,
-    x: 0.5,
-    y: 0.25,
-    opacity: 1,
-    rounded: false,
-  },
-})
-
-// ─── Engine ──────────────────────────────────────────────────────────────────
-
+const route = useRoute()
+const router = useRouter()
+const config = ref<PosterConfig>(createPosterConfig())
 const canvasRef = ref<HTMLCanvasElement | null>(null)
-const configRef = computed(() => config as PosterConfig)
-const engine = usePosterEngine(canvasRef, configRef)
-
-const canvasWidth = computed(() => RATIO_DIMS[config.ratio][0])
-const canvasHeight = computed(() => RATIO_DIMS[config.ratio][1])
-const canvasAspectRatio = computed(() => {
-  const [w, h] = RATIO_DIMS[config.ratio]
-  return `${w} / ${h}`
-})
-
-// Re-render when ratio changes (canvas resizes after nextTick)
-watch(() => config.ratio, async () => {
+const stageRef = ref<HTMLElement | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const logoInput = ref<HTMLInputElement | null>(null)
+const titleInput = ref<HTMLTextAreaElement | null>(null)
+const engine = usePosterEngine(canvasRef, config)
+const ready = ref(false)
+const busy = ref(false)
+const exporting = ref(false)
+const seeking = ref(false)
+const error = ref('')
+const notice = ref('')
+const saveStatus = ref('正在加载草稿')
+const panel = ref<'templates' | 'media' | 'text' | 'brand'>('templates')
+const category = ref('all')
+const selection = ref<PosterSelection>('title')
+const cropMode = ref(false)
+const showGuides = ref(true)
+const snappedX = ref(false)
+const snappedY = ref(false)
+const thumbnails = ref<Record<string, string>>({})
+const thumbnailPreview = ref('')
+const videoFrames = ref<{ time: number; url: string }[]>([])
+const presets = ref<SavedPosterTemplate[]>([])
+const presetName = ref('')
+const exportName = ref('')
+const format = ref<'png' | 'jpeg'>('png')
+const quality = ref(0.92)
+const exportOpen = ref(false)
+const exportDialog = ref<HTMLDialogElement | null>(null)
+watch(exportOpen, async (open) => {
   await nextTick()
-  engine.renderPoster()
+  if (open) exportDialog.value?.showModal()
+  else exportDialog.value?.close()
 })
-
-// Re-render on any config change
-watch(
-  () => [
-    config.bgType, config.bgColor, config.bgColorEnd, config.bgOverlayOpacity,
-    config.title.text, config.title.fontSize, config.title.fontWeight, config.title.fontStyle,
-    config.title.color, config.title.x, config.title.y, config.title.textAlign,
-    config.title.shadowColor, config.title.shadowBlur, config.title.strokeColor, config.title.strokeWidth,
-    config.subtitle.text, config.subtitle.fontSize, config.subtitle.fontWeight, config.subtitle.fontStyle,
-    config.subtitle.color, config.subtitle.x, config.subtitle.y, config.subtitle.textAlign,
-    config.subtitle.shadowColor, config.subtitle.shadowBlur, config.subtitle.strokeColor, config.subtitle.strokeWidth,
-    config.logo.size, config.logo.x, config.logo.y, config.logo.opacity, config.logo.rounded,
-  ],
-  () => engine.renderPoster(),
+const smallPreview = ref(false)
+const stageSize = ref({ width: 800, height: 600 })
+const zoom = ref(1)
+const variants: Partial<Record<PosterRatio, PosterConfig>> = {}
+const dimensions = computed(() => POSTER_DIMS[config.value.ratio])
+const filteredTemplates = computed(() =>
+  POSTER_TEMPLATES.filter((t) => category.value === 'all' || t.category === category.value),
+)
+const currentTemplate = computed(() =>
+  POSTER_TEMPLATES.find((t) => t.id === config.value.templateId),
+)
+const selectedText = computed(() =>
+  selection.value === 'subtitle' ? config.value.subtitle : config.value.title,
+)
+const textSelection = computed(() => selection.value === 'title' || selection.value === 'subtitle')
+const videoDuration = computed(() =>
+  engine.bgMedia.value instanceof HTMLVideoElement ? engine.bgMedia.value.duration : 0,
+)
+const artboardStyle = computed(() => {
+  const [w, h] = dimensions.value
+  const available = stageSize.value
+  const scale =
+    Math.min(
+      Math.max(80, available.width - (available.width < 700 ? 24 : 56)) / w,
+      Math.max(100, available.height - (available.width < 700 ? 20 : 70)) / h,
+    ) * zoom.value
+  return { width: `${w * scale}px`, height: `${h * scale}px` }
+})
+const selectionStyle = computed(() => {
+  const bounds = engine.bounds.value[selection.value]
+  if (!bounds || (selection.value === 'image' && !cropMode.value)) return undefined
+  const [w, h] = dimensions.value
+  return {
+    left: `${(bounds.x / w) * 100}%`,
+    top: `${(bounds.y / h) * 100}%`,
+    width: `${(bounds.width / w) * 100}%`,
+    height: `${(bounds.height / h) * 100}%`,
+  }
+})
+const overflow = computed(
+  () => engine.bounds.value.title?.overflow || engine.bounds.value.subtitle?.overflow,
 )
 
-// Seek bg video and re-render when bgVideoTime changes
-watch(() => config.bgVideoTime, async (t) => {
-  await engine.seekBgVideoAsync(t)
-  engine.renderPoster()
-})
+let history: PosterConfig[] = []
+const historyIndex = ref(-1)
+const historyLength = ref(0)
+const dirty = ref(false)
+let historyTimer: ReturnType<typeof setTimeout> | undefined
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+let frameRequest = 0
+let disposed = false
+let applyingHistory = false
+let pointerActive = false
+let observer: ResizeObserver | undefined
+let restoreRevision = 0
+let uploadRevision = 0
+let seekRequest = 0
+let saveSequence = Promise.resolve()
 
-onMounted(() => {
-  setTimeout(() => engine.renderPoster(), 50)
-})
-
-// ─── Logo upload ─────────────────────────────────────────────────────────────
-
-async function handleLogoDrop(e: DragEvent) {
-  e.preventDefault()
-  const file = e.dataTransfer?.files[0]
-  if (file && file.type.startsWith('image/')) await setLogoFile(file)
+function signature(value: PosterConfig) {
+  return JSON.stringify(value, (_key, entry) =>
+    entry instanceof File ? [entry.name, entry.size, entry.lastModified] : entry,
+  )
 }
-async function handleLogoInput(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (file) await setLogoFile(file)
-}
-async function setLogoFile(file: File) {
-  if (config.logo.url) URL.revokeObjectURL(config.logo.url)
-  config.logo.file = file
-  config.logo.url = URL.createObjectURL(file)
-  await engine.loadLogoImage(file)
-  engine.renderPoster()
-}
-function clearLogo() {
-  if (config.logo.url) URL.revokeObjectURL(config.logo.url)
-  config.logo.file = null
-  config.logo.url = ''
-  engine.clearLogo()
-  engine.renderPoster()
-}
-
-// ─── Bg media upload ─────────────────────────────────────────────────────────
-
-async function handleBgDrop(e: DragEvent) {
-  e.preventDefault()
-  const file = e.dataTransfer?.files[0]
-  if (!file) return
-  if (file.type.startsWith('image/')) await setBgFile(file, 'image')
-  else if (file.type.startsWith('video/')) await setBgFile(file, 'video')
-}
-async function handleBgInput(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  if (file.type.startsWith('image/')) await setBgFile(file, 'image')
-  else if (file.type.startsWith('video/')) await setBgFile(file, 'video')
-}
-async function setBgFile(file: File, type: 'image' | 'video') {
-  clearBgFile()
-  config.bgFile = file
-  config.bgUrl = URL.createObjectURL(file)
-  config.bgType = type
-  config.bgVideoTime = 0
-  await engine.loadBgMedia(file, type)
-  engine.renderPoster()
-}
-function clearBgFile() {
-  if (config.bgUrl) URL.revokeObjectURL(config.bgUrl)
-  config.bgFile = null
-  config.bgUrl = ''
-  engine.clearBgMedia()
-}
-function switchBgType(type: 'color' | 'image' | 'video') {
-  if (type === 'color') clearBgFile()
-  else if (config.bgType !== type) clearBgFile()
-  config.bgType = type
-  engine.renderPoster()
-}
-
-// ─── Video bg duration ───────────────────────────────────────────────────────
-
-const bgVideoDuration = computed(() => {
-  if (engine.bgMedia.value instanceof HTMLVideoElement) {
-    return engine.bgMedia.value.duration || 60
+function recordHistory() {
+  clearTimeout(historyTimer)
+  if (applyingHistory || !ready.value) return
+  const value = copyPoster(config.value)
+  if (history[historyIndex.value] && signature(history[historyIndex.value]) === signature(value)) {
+    dirty.value = false
+    return
   }
-  return 60
-})
-
-// ─── Export ───────────────────────────────────────────────────────────────────
-
-const isExporting = ref<null | 'png' | 'jpeg'>(null)
-
-// ─── Apply template ──────────────────────────────────────────────────────────
-
-function applyTemplate(t: PosterTemplate) {
-  config.bgType = 'color'
-  config.bgColor = t.bgColor
-  config.bgColorEnd = t.bgColorEnd
-  Object.assign(config.title, t.title)
-  Object.assign(config.subtitle, t.subtitle)
-  Object.assign(config.logo, t.logo)
-  engine.renderPoster()
+  history = history.slice(0, historyIndex.value + 1)
+  history.push(value)
+  if (history.length > 50) history.shift()
+  historyIndex.value = history.length - 1
+  historyLength.value = history.length
+  dirty.value = false
 }
+function saveDraft() {
+  clearTimeout(draftTimer)
+  if (!ready.value) return
+  variants[config.value.ratio] = copyPoster(config.value)
+  const value: PosterDraft = {
+    version: 1,
+    config: copyPoster(config.value),
+    variants: { ...variants },
+  }
+  // Serialize transactions so an older snapshot cannot overwrite a newer edit.
+  saveSequence = saveSequence.then(async () => {
+    if (!disposed) saveStatus.value = '正在保存'
+    try {
+      await writePosterStorage('draft', value)
+      if (!disposed) saveStatus.value = '已保存到本机'
+    } catch (err) {
+      if (!disposed) {
+        saveStatus.value = '保存失败'
+        reportError(err)
+      }
+    }
+  })
+}
+function reportError(err: unknown) {
+  error.value = err instanceof Error ? err.message : '操作失败，请重试'
+}
+function flash(message: string) {
+  notice.value = message
+  error.value = ''
+}
+function scheduleRender() {
+  cancelAnimationFrame(frameRequest)
+  frameRequest = requestAnimationFrame(() => {
+    engine.renderPoster()
+    clearTimeout(previewTimer)
+    previewTimer = setTimeout(renderPreviews, 180)
+  })
+}
+watch(
+  config,
+  () => {
+    scheduleRender()
+    if (!ready.value || applyingHistory) return
+    saveStatus.value = '有修改待保存'
+    dirty.value = true
+    if (!pointerActive) {
+      clearTimeout(historyTimer)
+      historyTimer = setTimeout(recordHistory, 350)
+      clearTimeout(draftTimer)
+      draftTimer = setTimeout(saveDraft, 700)
+    }
+  },
+  { deep: true, flush: 'post' },
+)
 
-// ─── Export ───────────────────────────────────────────────────────────────────
-
-async function handleExport(format: 'png' | 'jpeg') {
-  if (isExporting.value) return
-  isExporting.value = format
+async function restoreConfig(value: PosterConfig) {
+  const revision = ++restoreRevision
+  busy.value = true
   try {
-    const blob = format === 'png' ? await engine.exportPNG() : await engine.exportJPEG(0.92)
-    await saveImageFile(blob, format)
-  } catch (err) {
-    console.error('导出失败', err)
+    if (value.bgFile !== config.value.bgFile || !engine.bgMedia.value) {
+      await engine.loadBgMedia(
+        value.bgFile || coastUrl,
+        value.bgFile && value.bgType === 'video' ? 'video' : 'image',
+      )
+    }
+    if (revision !== restoreRevision) return
+    if (value.logo.file !== config.value.logo.file) {
+      if (value.logo.file) await engine.loadLogoImage(value.logo.file)
+      else engine.clearLogo()
+    }
+    if (revision !== restoreRevision) return
+    config.value = copyPoster(value)
+    if (value.bgType === 'video') await engine.seekBgVideoAsync(value.bgVideoTime)
+    await nextTick()
+    scheduleRender()
   } finally {
-    isExporting.value = null
+    if (revision === restoreRevision) busy.value = false
   }
 }
+async function moveHistory(direction: number) {
+  if (busy.value || exporting.value) return
+  recordHistory()
+  const target = historyIndex.value + direction
+  if (target < 0 || target >= history.length) return
+  applyingHistory = true
+  try {
+    await restoreConfig(history[target])
+    historyIndex.value = target
+    dirty.value = false
+    await nextTick()
+    saveDraft()
+    videoFrames.value = []
+  } catch (err) {
+    reportError(err)
+  } finally {
+    applyingHistory = false
+  }
+}
+function applyTemplate(template: PosterTemplate) {
+  recordHistory()
+  config.value = applyPosterTemplate(config.value, template)
+  cropMode.value = false
+  flash(`已应用「${template.name}」`)
+}
+function upgradeComposition(value: PosterConfig): PosterConfig {
+  if (value.composition) return value
+  const template = POSTER_TEMPLATES.find((item) => item.id === value.templateId)
+  return template ? applyPosterTemplate(value, template) : value
+}
+function switchRatio(ratio: PosterRatio) {
+  if (ratio === config.value.ratio) return
+  recordHistory()
+  variants[config.value.ratio] = copyPoster(config.value)
+  const storedVariant = variants[ratio]
+  const saved = storedVariant ? upgradeComposition(storedVariant) : undefined
+  if (saved) {
+    config.value = {
+      ...copyPoster(saved),
+      bgFile: config.value.bgFile,
+      bgUrl: '',
+      bgType: config.value.bgType,
+      bgVideoTime: config.value.bgVideoTime,
+      title: { ...saved.title, text: config.value.title.text },
+      subtitle: { ...saved.subtitle, text: config.value.subtitle.text },
+      logo: { ...saved.logo, file: config.value.logo.file },
+    }
+  } else
+    config.value = applyPosterTemplate(
+      config.value,
+      currentTemplate.value || POSTER_TEMPLATES[0],
+      ratio,
+    )
+  cropMode.value = false
+}
+function renderPreviews() {
+  if (disposed || !canvasRef.value) return
+  const output: Record<string, string> = {}
+  for (const template of POSTER_TEMPLATES) {
+    const preview = document.createElement('canvas')
+    const [w, h] = dimensions.value
+    preview.width = 360
+    preview.height = Math.round((360 * h) / w)
+    engine.renderTo(preview, applyPosterTemplate(config.value, template))
+    output[template.id] = preview.toDataURL('image/jpeg', 0.75)
+  }
+  thumbnails.value = output
+  const thumbnail = document.createElement('canvas')
+  thumbnail.width = 320
+  thumbnail.height = Math.round((320 * dimensions.value[1]) / dimensions.value[0])
+  engine.renderTo(thumbnail)
+  thumbnailPreview.value = thumbnail.toDataURL('image/jpeg', 0.85)
+}
+
+async function uploadFile(file?: File, logo = false) {
+  if (!file || busy.value) return
+  const image = file.type.startsWith('image/')
+  const video = file.type.startsWith('video/')
+  if (!image && (!video || logo)) {
+    error.value = logo ? '请选择图片文件' : '请选择图片或视频文件'
+    return
+  }
+  recordHistory()
+  const revision = ++uploadRevision
+  busy.value = true
+  error.value = ''
+  try {
+    if (logo) {
+      await engine.loadLogoImage(file)
+      if (revision !== uploadRevision) return
+      config.value.logo.file = file
+      selection.value = 'logo'
+      panel.value = 'brand'
+    } else {
+      await engine.loadBgMedia(file, image ? 'image' : 'video')
+      if (revision !== uploadRevision) return
+      Object.assign(config.value, {
+        bgFile: file,
+        bgType: image ? 'image' : 'video',
+        bgUrl: '',
+        bgVideoTime: 0,
+        bgPositionX: 0.5,
+        bgPositionY: 0.5,
+        bgZoom: 1,
+      })
+      videoFrames.value = []
+      selection.value = 'image'
+      panel.value = 'media'
+    }
+    flash(`已载入「${file.name}」`)
+    scheduleRender()
+    saveDraft()
+  } catch (err) {
+    reportError(err)
+  } finally {
+    if (revision === uploadRevision) busy.value = false
+  }
+}
+function fileChanged(event: Event, logo = false) {
+  const input = event.target as HTMLInputElement
+  void uploadFile(input.files?.[0], logo)
+  input.value = ''
+}
+function dropFile(event: DragEvent) {
+  void uploadFile(event.dataTransfer?.files[0])
+}
+async function resetImage() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await engine.loadBgMedia(coastUrl, 'image')
+    Object.assign(config.value, {
+      bgFile: null,
+      bgType: 'image',
+      bgZoom: 1,
+      bgPositionX: 0.5,
+      bgPositionY: 0.5,
+      bgVideoTime: 0,
+    })
+    videoFrames.value = []
+    scheduleRender()
+  } catch (err) {
+    reportError(err)
+  } finally {
+    busy.value = false
+  }
+}
+function openPanel(value: string) {
+  panel.value = value as typeof panel.value
+  cropMode.value = false
+  if (value === 'text' && !textSelection.value) selection.value = 'title'
+  if (value === 'media') selection.value = 'image'
+  if (value === 'brand' && config.value.logo.file) selection.value = 'logo'
+}
+function toggleCrop() {
+  selection.value = 'image'
+  cropMode.value = !cropMode.value
+}
+function removeLogo() {
+  config.value.logo.file = null
+  engine.clearLogo()
+  scheduleRender()
+}
+function dismissNotice() {
+  error.value = ''
+  notice.value = ''
+}
+function selectLayer(layer: PosterSelection) {
+  selection.value = layer
+  cropMode.value = false
+  if (panel.value !== 'templates' || !window.matchMedia('(min-width: 1181px)').matches) {
+    panel.value = layer === 'image' ? 'media' : layer === 'logo' ? 'brand' : 'text'
+  }
+}
+function alignText(axis: 'x' | 'y') {
+  if (axis === 'x') {
+    selectedText.value.x = 0.5
+    selectedText.value.textAlign = 'center'
+  } else selectedText.value.y = 0.5
+}
+function resetPosition() {
+  const fresh = applyPosterTemplate(config.value, currentTemplate.value || POSTER_TEMPLATES[0])
+  if (textSelection.value) {
+    const key = selection.value as 'title' | 'subtitle'
+    const text = config.value[key].text
+    config.value[key] = { ...fresh[key], text }
+  } else if (selection.value === 'logo')
+    Object.assign(config.value.logo, { x: 0.88, y: 0.12, size: 0.07 })
+  else Object.assign(config.value, { bgPositionX: 0.5, bgPositionY: 0.5, bgZoom: 1 })
+}
+
+let drag:
+  | {
+      kind: 'move' | 'resize'
+      layer: PosterSelection
+      startX: number
+      startY: number
+      initial: PosterConfig
+    }
+  | undefined
+function pointerDown(event: PointerEvent, resize = false) {
+  if (busy.value || exporting.value || event.button !== 0) return
+  const canvas = canvasRef.value!
+  const rect = canvas.getBoundingClientRect()
+  const x = ((event.clientX - rect.left) / rect.width) * dimensions.value[0]
+  const y = ((event.clientY - rect.top) / rect.height) * dimensions.value[1]
+  if (!resize && !cropMode.value) {
+    const hit = (['subtitle', 'title', 'logo'] as const).find((key) => {
+      const b = engine.bounds.value[key]
+      return b && x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height
+    })
+    if (hit) selectLayer(hit)
+    else {
+      selectLayer('image')
+      return
+    }
+  }
+  recordHistory()
+  pointerActive = true
+  drag = {
+    kind: resize ? 'resize' : 'move',
+    layer: selection.value,
+    startX: event.clientX,
+    startY: event.clientY,
+    initial: copyPoster(config.value),
+  }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+function pointerMove(event: PointerEvent) {
+  if (!drag || !canvasRef.value) return
+  const rect = canvasRef.value.getBoundingClientRect()
+  const dx = (event.clientX - drag.startX) / rect.width
+  const dy = (event.clientY - drag.startY) / rect.height
+  const initial = drag.initial
+  snappedX.value = false
+  snappedY.value = false
+  const snap = (value: number, axis: 'x' | 'y') => {
+    const clamped = Math.max(0.02, Math.min(0.98, value))
+    if (Math.abs(clamped - 0.5) < 0.012) {
+      if (axis === 'x') snappedX.value = true
+      else snappedY.value = true
+      return 0.5
+    }
+    return clamped
+  }
+  if (drag.layer === 'image') {
+    const source = engine.bgMedia.value
+    if (!source) return
+    const [w, h] = dimensions.value
+    const frame = mediaFrame(config.value, w, h)
+    const sw = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth
+    const sh = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight
+    const fit = config.value.bgFit === 'contain' ? Math.min : Math.max
+    const scale = fit(frame.width / sw, frame.height / sh) * (config.value.bgZoom ?? 1)
+    const extraW = frame.width - sw * scale
+    const extraH = frame.height - sh * scale
+    if (Math.abs(extraW) > 1)
+      config.value.bgPositionX = Math.max(
+        0,
+        Math.min(1, (initial.bgPositionX ?? 0.5) + (dx * w) / extraW),
+      )
+    if (Math.abs(extraH) > 1)
+      config.value.bgPositionY = Math.max(
+        0,
+        Math.min(1, (initial.bgPositionY ?? 0.5) + (dy * h) / extraH),
+      )
+  } else if (drag.kind === 'resize') {
+    if (drag.layer === 'logo')
+      config.value.logo.size = Math.max(0.03, Math.min(0.8, initial.logo.size + dx * 2))
+    else {
+      const layer = config.value[drag.layer]
+      layer.width = Math.max(0.1, Math.min(0.95, (initial[drag.layer].width ?? 0.84) + dx))
+      layer.fontSize = Math.max(12, Math.min(400, initial[drag.layer].fontSize * (1 + dy * 2)))
+    }
+  } else {
+    config.value[drag.layer].x = snap(initial[drag.layer].x + dx, 'x')
+    config.value[drag.layer].y = snap(initial[drag.layer].y + dy, 'y')
+  }
+}
+function pointerUp() {
+  if (!drag) return
+  drag = undefined
+  pointerActive = false
+  snappedX.value = false
+  snappedY.value = false
+  recordHistory()
+  saveDraft()
+}
+function editOnCanvas() {
+  if (!textSelection.value) return
+  panel.value = 'text'
+  nextTick(() => {
+    titleInput.value?.focus()
+    titleInput.value?.select()
+  })
+}
+function keydown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement
+  if (target.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(target.tagName) || exportOpen.value)
+    return
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+    event.preventDefault()
+    void moveHistory(event.shiftKey ? 1 : -1)
+    return
+  }
+  if (busy.value || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return
+  if (selection.value === 'image') return
+  event.preventDefault()
+  const layer = config.value[selection.value]
+  const step = event.shiftKey ? 10 : 1
+  if (event.key === 'ArrowLeft') layer.x = Math.max(0, layer.x - step / dimensions.value[0])
+  if (event.key === 'ArrowRight') layer.x = Math.min(1, layer.x + step / dimensions.value[0])
+  if (event.key === 'ArrowUp') layer.y = Math.max(0, layer.y - step / dimensions.value[1])
+  if (event.key === 'ArrowDown') layer.y = Math.min(1, layer.y + step / dimensions.value[1])
+}
+
+async function seekVideo(time: number) {
+  const request = ++seekRequest
+  seeking.value = true
+  try {
+    await engine.seekBgVideoAsync(time)
+    if (request !== seekRequest) return
+    config.value.bgVideoTime = time
+    scheduleRender()
+  } catch (err) {
+    if (request === seekRequest) reportError(err)
+  } finally {
+    if (request === seekRequest) seeking.value = false
+  }
+}
+async function generateFrames() {
+  const video = engine.bgMedia.value
+  if (!(video instanceof HTMLVideoElement) || busy.value) return
+  busy.value = true
+  const originalTime = config.value.bgVideoTime
+  const frames: { time: number; url: string }[] = []
+  try {
+    for (let i = 0; i < 8; i++) {
+      const time = Math.max(0, ((video.duration - 0.01) * i) / 7)
+      await engine.seekBgVideoAsync(time)
+      const canvas = document.createElement('canvas')
+      canvas.width = 160
+      canvas.height = Math.max(1, Math.round((160 * video.videoHeight) / video.videoWidth))
+      canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height)
+      frames.push({ time, url: canvas.toDataURL('image/jpeg', 0.7) })
+    }
+    videoFrames.value = frames
+  } catch (err) {
+    reportError(err)
+  } finally {
+    try {
+      await engine.seekBgVideoAsync(originalTime)
+    } catch (err) {
+      reportError(err)
+    }
+    busy.value = false
+    scheduleRender()
+  }
+}
+async function savePreset() {
+  if (!presetName.value.trim()) {
+    error.value = '请先填写模板名称'
+    return
+  }
+  const value: SavedPosterTemplate = {
+    id: crypto.randomUUID(),
+    name: presetName.value.trim().slice(0, 40),
+    config: { ...copyPoster(config.value), bgFile: null, bgUrl: '' },
+  }
+  const next = [...presets.value, value]
+  try {
+    await writePosterStorage(
+      'templates',
+      next.map((t) => ({ ...t, config: copyPoster(t.config) })),
+    )
+    presets.value = next
+    presetName.value = ''
+    flash('已保存到我的模板')
+  } catch (err) {
+    reportError(err)
+  }
+}
+async function applyPreset(preset: SavedPosterTemplate) {
+  recordHistory()
+  try {
+    const value = copyPoster(preset.config)
+    Object.assign(value, {
+      bgFile: config.value.bgFile,
+      bgType: config.value.bgType,
+      bgUrl: '',
+      bgVideoTime: config.value.bgVideoTime,
+    })
+    value.title.text = config.value.title.text
+    value.subtitle.text = config.value.subtitle.text
+    await restoreConfig(value)
+    flash(`已应用「${preset.name}」`)
+  } catch (err) {
+    reportError(err)
+  }
+}
+async function deletePreset(id: string) {
+  const next = presets.value.filter((p) => p.id !== id)
+  try {
+    await writePosterStorage(
+      'templates',
+      next.map((t) => ({ ...t, config: copyPoster(t.config) })),
+    )
+    presets.value = next
+    flash('已移除模板')
+  } catch (err) {
+    reportError(err)
+  }
+}
+async function exportPoster() {
+  if (exporting.value || busy.value || seeking.value) return
+  exporting.value = true
+  error.value = ''
+  try {
+    if (config.value.bgType === 'video') await engine.seekBgVideoAsync(config.value.bgVideoTime)
+    const blob =
+      format.value === 'png' ? await engine.exportPNG() : await engine.exportJPEG(quality.value)
+    const saved = await saveImageFile(
+      blob,
+      format.value,
+      exportName.value.trim() || config.value.title.text.replace(/\s+/g, ' ').slice(0, 60),
+    )
+    if (saved) {
+      flash('图片已导出')
+      exportOpen.value = false
+    }
+  } catch (err) {
+    reportError(err)
+  } finally {
+    exporting.value = false
+  }
+}
+function openExport() {
+  renderPreviews()
+  exportName.value = config.value.title.text.replace(/\s+/g, ' ').slice(0, 60) || '我的封面'
+  exportOpen.value = true
+}
+
+onMounted(async () => {
+  let previousComposition: PosterConfig | undefined
+  window.addEventListener('keydown', keydown)
+  window.addEventListener('pagehide', saveDraft)
+  observer = new ResizeObserver((entries) => {
+    const rect = entries[0]?.contentRect
+    if (rect) stageSize.value = { width: rect.width, height: rect.height }
+  })
+  if (stageRef.value) observer.observe(stageRef.value)
+  try {
+    const [draft, saved] = await Promise.all([
+      readPosterStorage<PosterDraft>('draft'),
+      readPosterStorage<SavedPosterTemplate[]>('templates'),
+    ])
+    if (disposed) return
+    if (saved) presets.value = saved
+    if (draft?.version === 1 && POSTER_DIMS[draft.config.ratio]) {
+      Object.assign(variants, draft.variants)
+      const upgraded = upgradeComposition(draft.config)
+      if (upgraded !== draft.config) previousComposition = copyPoster(draft.config)
+      await restoreConfig(upgraded)
+      if (draft.config.logo.file && !engine.logoImage.value)
+        await engine.loadLogoImage(draft.config.logo.file)
+      flash('已恢复上次的封面草稿')
+    } else await engine.loadBgMedia(coastUrl, 'image')
+    saveStatus.value = '已保存到本机'
+  } catch (err) {
+    reportError(err)
+    saveStatus.value = '草稿暂不可用'
+    try {
+      await engine.loadBgMedia(coastUrl, 'image')
+    } catch (loadError) {
+      reportError(loadError)
+    }
+  }
+  if (disposed) return
+  ready.value = true
+  if (route.query.source === 'capture') {
+    try {
+      const incoming = await readPosterStorage<File>('incoming-media')
+      if (incoming) await uploadFile(incoming)
+      await router.replace({ path: '/poster' })
+    } catch (err) {
+      reportError(err)
+    }
+  }
+  await nextTick()
+  if (previousComposition) {
+    history = [previousComposition]
+    historyIndex.value = 0
+    historyLength.value = 1
+  }
+  recordHistory()
+  engine.renderPoster()
+  renderPreviews()
+})
+onBeforeUnmount(() => {
+  saveDraft()
+  disposed = true
+  restoreRevision++
+  uploadRevision++
+  observer?.disconnect()
+  window.removeEventListener('keydown', keydown)
+  window.removeEventListener('pagehide', saveDraft)
+  cancelAnimationFrame(frameRequest)
+  clearTimeout(historyTimer)
+  clearTimeout(draftTimer)
+  clearTimeout(previewTimer)
+})
 </script>
 
 <template>
-  <div class="poster-page">
-
-    <!-- Preview column -->
-    <div class="preview-col">
-      <div class="canvas-wrapper">
-        <div class="canvas-shell" :style="{ aspectRatio: canvasAspectRatio }">
-          <canvas
-            ref="canvasRef"
-            :width="canvasWidth"
-            :height="canvasHeight"
-            class="preview-canvas"
-          />
+  <div
+    class="poster-studio"
+    :class="{ 'has-inspector': panel === 'templates' }"
+    @dragover.prevent
+    @drop.prevent="dropFile"
+  >
+    <input
+      ref="fileInput"
+      class="visually-hidden"
+      type="file"
+      accept="image/*,video/*"
+      aria-label="上传封面素材"
+      @change="fileChanged($event)"
+    />
+    <input
+      ref="logoInput"
+      class="visually-hidden"
+      type="file"
+      accept="image/*"
+      aria-label="上传品牌 Logo"
+      @change="fileChanged($event, true)"
+    />
+    <header class="studio-toolbar">
+      <div class="document-heading">
+        <span class="studio-mark">F</span>
+        <div>
+          <h1>封面工作室</h1>
+          <span class="save-state" role="status">{{ saveStatus }}</span>
         </div>
       </div>
-
-      <!-- Export bar -->
-      <div class="export-bar">
+      <div class="toolbar-controls">
         <button
-          class="export-btn png"
-          :disabled="!!isExporting"
-          @click="handleExport('png')"
+          class="icon-button"
+          aria-label="撤销"
+          title="撤销 ⌘Z / Ctrl Z"
+          :disabled="busy || (!dirty && historyIndex < 1)"
+          @click="moveHistory(-1)"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          {{ isExporting === 'png' ? '导出中…' : '导出 PNG' }}
+          ↶
         </button>
         <button
-          class="export-btn jpg"
-          :disabled="!!isExporting"
-          @click="handleExport('jpeg')"
+          class="icon-button"
+          aria-label="重做"
+          title="重做 ⇧⌘Z / Ctrl Shift Z"
+          :disabled="busy || historyIndex >= historyLength - 1"
+          @click="moveHistory(1)"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          {{ isExporting === 'jpeg' ? '导出中…' : '导出 JPG' }}
+          ↷
         </button>
-        <span class="size-hint">{{ canvasWidth }} × {{ canvasHeight }}</span>
+        <span class="toolbar-rule" />
+        <label class="ratio-control"
+          ><span>画布</span
+          ><select
+            aria-label="画布比例"
+            :value="config.ratio"
+            :disabled="busy || exporting"
+            @change="switchRatio(($event.target as HTMLSelectElement).value as PosterRatio)"
+          >
+            <option v-for="(_, ratio) in POSTER_DIMS" :key="ratio" :value="ratio">
+              {{ ratio }}
+            </option>
+          </select></label
+        >
+        <button
+          class="secondary-button thumbnail-toggle"
+          :aria-pressed="smallPreview"
+          @click="smallPreview = !smallPreview"
+        >
+          缩略预览
+        </button>
+        <button class="primary-button" :disabled="!ready || busy || seeking" @click="openExport">
+          <span>↗</span> 导出图片
+        </button>
       </div>
-    </div>
+    </header>
 
-    <!-- Sidebar -->
-    <div class="sidebar">
+    <nav class="tool-rail" aria-label="封面编辑工具">
+      <button
+        v-for="item in [
+          { id: 'templates', name: '模板', icon: '▦' },
+          { id: 'media', name: '素材', icon: '▧' },
+          { id: 'text', name: '文字', icon: 'T' },
+          { id: 'brand', name: '品牌', icon: '◈' },
+        ]"
+        :key="item.id"
+        :class="{ active: panel === item.id }"
+        :aria-pressed="panel === item.id"
+        @click="openPanel(item.id)"
+      >
+        <span>{{ item.icon }}</span
+        >{{ item.name }}
+      </button>
+    </nav>
 
-      <!-- Templates -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <path d="M8 21h8M12 17v4"/>
-          </svg>
-          模版
+    <aside
+      class="library-panel"
+      :aria-label="panel === 'templates' ? '模板库' : '编辑面板'"
+      :inert="busy || exporting || !ready || undefined"
+    >
+      <template v-if="panel === 'templates'">
+        <div class="panel-heading">
+          <span class="overline">THE COVER COLLECTION</span>
+          <h2>给灵感一个封面</h2>
+          <p>选一种构图，让故事开始。</p>
         </div>
-        <!-- group by tag -->
-        <div v-for="group in [['小红书', 'xhs'], ['B站', 'bili']]" :key="group[0]">
-          <div class="tpl-group-label">{{ group[0] }}</div>
-          <div class="template-grid">
-            <button
-              v-for="t in TEMPLATES.filter(t => t.tag === group[0])"
-              :key="t.id"
-              class="template-swatch"
-              :style="{ background: `linear-gradient(160deg, ${t.bgColor} 0%, ${t.bgColorEnd} 100%)` }"
-              @click="applyTemplate(t)"
-            >
-              <!-- SVG layout diagram -->
-              <svg class="swatch-diagram" viewBox="0 0 100 60" preserveAspectRatio="xMidYMid meet">
-                <!-- logo circle -->
-                <circle
-                  :cx="t.logo.x * 100"
-                  :cy="t.logo.y * 60"
-                  :r="Math.min(12, Math.max(3, t.logo.size * 18))"
-                  fill="none"
-                  :stroke="t.lightBg ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.35)'"
-                  stroke-width="1.2"
-                />
-                <!-- title bar -->
-                <rect
-                  :x="tBarX(t.title.textAlign, t.title.x, tBarW(t.title.fontSize))"
-                  :y="t.title.y * 60 - 2"
-                  :width="tBarW(t.title.fontSize)"
-                  height="3.5"
-                  :fill="t.title.color"
-                  opacity="0.85"
-                  rx="1.5"
-                />
-                <!-- subtitle bar -->
-                <rect
-                  :x="tBarX(t.subtitle.textAlign, t.subtitle.x, tBarW(t.subtitle.fontSize) * 0.62)"
-                  :y="t.subtitle.y * 60 - 1.2"
-                  :width="tBarW(t.subtitle.fontSize) * 0.62"
-                  height="2"
-                  :fill="t.lightBg ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.45)'"
-                  rx="1"
-                />
-              </svg>
-              <!-- info bar -->
-              <div class="swatch-info" :class="{ 'swatch-info--light': t.lightBg }">
-                <span class="swatch-name" :style="{ color: t.lightBg ? t.title.color : t.title.color }">{{ t.name }}</span>
-                <span class="swatch-desc">{{ t.desc }}</span>
-              </div>
+        <div class="category-tabs" aria-label="模板分类">
+          <button
+            v-for="item in POSTER_CATEGORIES"
+            :key="item.id"
+            :class="{ active: category === item.id }"
+            @click="category = item.id"
+          >
+            {{ item.name }}
+          </button>
+        </div>
+        <div class="template-list">
+          <button
+            v-for="template in filteredTemplates"
+            :key="template.id"
+            class="template-card"
+            :class="{ selected: config.templateId === template.id }"
+            :aria-label="`应用${template.name}模板`"
+            :aria-pressed="config.templateId === template.id"
+            @click="applyTemplate(template)"
+          >
+            <div class="template-art" :style="{ background: template.paper }">
+              <img
+                v-if="thumbnails[template.id]"
+                :src="thumbnails[template.id]"
+                :alt="`${template.name}成品预览`"
+              /><span v-if="config.templateId === template.id" class="template-check">✓</span>
+            </div>
+            <div class="template-caption">
+              <strong>{{ template.name }}</strong
+              ><span>{{ template.caption }}</span>
+            </div>
+          </button>
+        </div>
+        <section v-if="presets.length" class="saved-templates">
+          <h3>我的模板</h3>
+          <div v-for="preset in presets" :key="preset.id" class="saved-row">
+            <button @click="applyPreset(preset)">{{ preset.name }}</button
+            ><button :aria-label="`删除${preset.name}模板`" @click="deletePreset(preset.id)">
+              ×
             </button>
           </div>
-        </div>
-      </div>
+        </section>
+      </template>
 
-      <div class="divider" />
-
-      <!-- Ratio -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <line x1="3" y1="9" x2="21" y2="9"/>
-            <line x1="9" y1="21" x2="9" y2="9"/>
-          </svg>
-          画布尺寸
+      <template v-else-if="panel === 'media'">
+        <div class="panel-heading">
+          <span class="overline">YOUR PERSPECTIVE</span>
+          <h2>从一张好图开始</h2>
+          <p>图片构图，或截取视频里的瞬间。</p>
         </div>
-        <div class="ratio-row">
+        <button class="upload-card" @click="fileInput?.click()">
+          <span>＋</span><strong>{{ config.bgFile ? '替换图片或视频' : '上传图片或视频' }}</strong
+          ><small>拖放文件到工作区也可以</small>
+        </button>
+        <div class="asset-info">
+          <span class="status-dot" />{{ config.bgFile?.name || '示例素材 · 海岸公路' }}
+        </div>
+        <div class="segmented">
           <button
-            v-for="r in (['16:9','9:16','1:1','4:3'] as PosterRatio[])"
-            :key="r"
-            class="ratio-btn"
-            :class="{ active: config.ratio === r }"
-            @click="config.ratio = r"
-          >{{ r }}</button>
-        </div>
-      </div>
-
-      <div class="divider" />
-
-      <!-- Background -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-          </svg>
-          背景
-        </div>
-
-        <div class="bg-type-row">
-          <button class="bg-type-btn" :class="{ active: config.bgType === 'color' }" @click="switchBgType('color')">纯色/渐变</button>
-          <button class="bg-type-btn" :class="{ active: config.bgType === 'image' }" @click="switchBgType('image')">图片</button>
-          <button class="bg-type-btn" :class="{ active: config.bgType === 'video' }" @click="switchBgType('video')">视频</button>
-        </div>
-
-        <template v-if="config.bgType === 'color'">
-          <label class="field-row">
-            <span>顶部</span>
-            <input type="color" v-model="config.bgColor" class="color-input" />
-          </label>
-          <label class="field-row">
-            <span>底部</span>
-            <input type="color" v-model="config.bgColorEnd" class="color-input" />
-            <span class="hint">渐变</span>
-          </label>
-        </template>
-
-        <template v-else>
-          <div
-            v-if="!config.bgFile"
-            class="drop-zone"
-            @dragover.prevent
-            @drop="handleBgDrop"
-            @click="($refs.bgInput as HTMLInputElement).click()"
+            :class="{ active: config.bgType !== 'color' }"
+            @click="config.bgType = config.bgFile?.type.startsWith('video/') ? 'video' : 'image'"
           >
-            <span v-if="config.bgType === 'image'">拖入图片或点击选择</span>
-            <span v-else>拖入视频或点击选择</span>
-            <input
-              ref="bgInput"
-              type="file"
-              :accept="config.bgType === 'image' ? 'image/*' : 'video/*'"
-              style="display:none"
-              @change="handleBgInput"
+            使用素材</button
+          ><button :class="{ active: config.bgType === 'color' }" @click="config.bgType = 'color'">
+            纯色背景
+          </button>
+        </div>
+        <template v-if="config.bgType !== 'color'">
+          <h3>图片取景</h3>
+          <div class="segmented">
+            <button :class="{ active: config.bgFit !== 'contain' }" @click="config.bgFit = 'cover'">
+              铺满画框</button
+            ><button
+              :class="{ active: config.bgFit === 'contain' }"
+              @click="config.bgFit = 'contain'"
+            >
+              完整显示
+            </button>
+          </div>
+          <label class="field"
+            ><span
+              >缩放 <output>{{ (config.bgZoom ?? 1).toFixed(2) }}×</output></span
+            ><input v-model.number="config.bgZoom" type="range" min="1" max="3" step="0.01"
+          /></label>
+          <label class="field"
+            ><span>水平取景</span
+            ><input v-model.number="config.bgPositionX" type="range" min="0" max="1" step="0.01"
+          /></label>
+          <label class="field"
+            ><span>垂直取景</span
+            ><input v-model.number="config.bgPositionY" type="range" min="0" max="1" step="0.01"
+          /></label>
+          <button
+            class="secondary-button full"
+            :class="{ chosen: cropMode }"
+            :aria-pressed="cropMode"
+            @click="toggleCrop"
+          >
+            {{ cropMode ? '✓ 完成取景' : '↔ 在画布上拖动取景' }}
+          </button>
+          <label class="field"
+            ><span
+              >背景暗化 <output>{{ Math.round(config.bgOverlayOpacity * 100) }}%</output></span
+            ><input
+              v-model.number="config.bgOverlayOpacity"
+              type="range"
+              min="0"
+              max="0.9"
+              step="0.01"
+          /></label>
+        </template>
+        <template v-if="config.bgType === 'video'">
+          <h3>视频选帧</h3>
+          <label class="field"
+            ><span
+              >时间
+              <output
+                >{{ config.bgVideoTime.toFixed(2) }}s / {{ videoDuration.toFixed(1) }}s</output
+              ></span
+            ><input
+              aria-label="视频取帧时间"
+              type="range"
+              :value="config.bgVideoTime"
+              min="0"
+              :max="Math.max(0, videoDuration - 0.01)"
+              step="0.01"
+              @input="seekVideo(Number(($event.target as HTMLInputElement).value))"
+          /></label>
+          <div class="segmented">
+            <button @click="seekVideo(Math.max(0, config.bgVideoTime - 1 / 30))">← 前一帧</button
+            ><button
+              @click="seekVideo(Math.min(videoDuration - 0.01, config.bgVideoTime + 1 / 30))"
+            >
+              后一帧 →
+            </button>
+          </div>
+          <button class="secondary-button full" @click="generateFrames">生成缩略帧条</button>
+          <div v-if="videoFrames.length" class="frame-strip">
+            <button
+              v-for="frame in videoFrames"
+              :key="frame.time"
+              :aria-label="`使用 ${frame.time.toFixed(1)} 秒画面`"
+              @click="seekVideo(frame.time)"
+            >
+              <img :src="frame.url" alt="视频帧" /><span>{{ frame.time.toFixed(1) }}s</span>
+            </button>
+          </div>
+        </template>
+        <h3>底色与配色</h3>
+        <div class="color-fields">
+          <label>底色<input v-model="config.bgColor" aria-label="背景底色" type="color" /></label
+          ><label
+            >渐变<input v-model="config.bgColorEnd" aria-label="背景渐变色" type="color" /></label
+          ><label
+            >强调色<input v-model="config.accentColor" aria-label="模板强调色" type="color"
+          /></label>
+        </div>
+        <button class="text-button" @click="resetImage">恢复示例图片</button>
+      </template>
+
+      <template v-else-if="panel === 'text'">
+        <div class="panel-heading">
+          <span class="overline">WORDS THAT MATTER</span>
+          <h2>把故事写在封面上</h2>
+        </div>
+        <div class="segmented">
+          <button :class="{ active: selection !== 'subtitle' }" @click="selection = 'title'">
+            主标题</button
+          ><button :class="{ active: selection === 'subtitle' }" @click="selection = 'subtitle'">
+            副标题
+          </button>
+        </div>
+        <label class="field"
+          ><span>{{ selection === 'subtitle' ? '副标题' : '主标题' }}</span
+          ><textarea
+            ref="titleInput"
+            v-model="selectedText.text"
+            :aria-label="selection === 'subtitle' ? '副标题内容' : '主标题内容'"
+            rows="4"
+            maxlength="500"
+            placeholder="写下你的标题，Enter 换行"
+          />
+        </label>
+        <label class="field"
+          ><span>字体</span
+          ><select v-model="selectedText.fontFamily" aria-label="文字字体">
+            <option v-for="font in POSTER_FONTS" :key="font.value" :value="font.value">
+              {{ font.name }}
+            </option>
+          </select></label
+        >
+        <div class="field-pair">
+          <label class="field"
+            ><span>字号</span
+            ><input
+              v-model.number="selectedText.fontSize"
+              aria-label="文字字号"
+              type="number"
+              min="12"
+              max="400"
+              @change="
+                selectedText.fontSize = Math.max(
+                  12,
+                  Math.min(400, Number(selectedText.fontSize) || 12),
+                )
+              " /></label
+          ><label class="field"
+            ><span>行距</span
+            ><input
+              v-model.number="selectedText.lineHeight"
+              aria-label="文字行距"
+              type="number"
+              min="1"
+              max="2"
+              step="0.05"
+              @change="
+                selectedText.lineHeight = Math.max(
+                  1,
+                  Math.min(2, Number(selectedText.lineHeight) || 1.2),
+                )
+              "
+          /></label>
+        </div>
+        <label class="check-row"
+          ><input v-model="selectedText.autoFit" type="checkbox" />自动适配文本框</label
+        >
+        <div class="text-tools">
+          <button
+            :class="{ chosen: selectedText.fontWeight === 'bold' }"
+            aria-label="粗体"
+            :aria-pressed="selectedText.fontWeight === 'bold'"
+            @click="
+              selectedText.fontWeight = selectedText.fontWeight === 'bold' ? 'normal' : 'bold'
+            "
+          >
+            <b>B</b></button
+          ><button
+            :class="{ chosen: selectedText.fontStyle === 'italic' }"
+            aria-label="斜体"
+            :aria-pressed="selectedText.fontStyle === 'italic'"
+            @click="
+              selectedText.fontStyle = selectedText.fontStyle === 'italic' ? 'normal' : 'italic'
+            "
+          >
+            <i>I</i></button
+          ><select v-model="selectedText.textAlign" aria-label="文字对齐">
+            <option value="left">左对齐</option>
+            <option value="center">居中</option>
+            <option value="right">右对齐</option></select
+          ><input v-model="selectedText.color" type="color" aria-label="文字颜色" />
+        </div>
+        <label class="field"
+          ><span
+            >文本框宽度 <output>{{ Math.round((selectedText.width ?? 0.84) * 100) }}%</output></span
+          ><input v-model.number="selectedText.width" type="range" min="0.1" max="0.95" step="0.01"
+        /></label>
+        <label class="field"
+          ><span
+            >文本框高度
+            <output>{{ Math.round((selectedText.maxHeight ?? 0.3) * 100) }}%</output></span
+          ><input
+            v-model.number="selectedText.maxHeight"
+            type="range"
+            min="0.05"
+            max="0.8"
+            step="0.01"
+        /></label>
+        <div class="segmented">
+          <button @click="alignText('x')">水平居中</button
+          ><button @click="alignText('y')">垂直居中</button>
+        </div>
+        <label class="field"
+          ><span>水平位置</span
+          ><input v-model.number="selectedText.x" type="range" min="0" max="1" step="0.001"
+        /></label>
+        <label class="field"
+          ><span>垂直位置</span
+          ><input v-model.number="selectedText.y" type="range" min="0" max="1" step="0.001"
+        /></label>
+        <h3>关键词强调</h3>
+        <label class="field"
+          ><span>强调文字</span
+          ><input v-model="selectedText.highlight" type="text" placeholder="填写标题中的词语"
+        /></label>
+        <label class="inline-field"
+          ><span>强调颜色</span
+          ><input v-model="selectedText.highlightColor" type="color" aria-label="关键词颜色"
+        /></label>
+        <details>
+          <summary>描边与阴影</summary>
+          <label class="field"
+            ><span>描边宽度</span
+            ><input
+              v-model.number="selectedText.strokeWidth"
+              type="range"
+              min="0"
+              max="20"
+              step="1" /></label
+          ><label class="inline-field"
+            ><span>描边颜色</span
+            ><input v-model="selectedText.strokeColor" type="color" aria-label="描边颜色" /></label
+          ><label class="field"
+            ><span>阴影强度</span
+            ><input
+              v-model.number="selectedText.shadowBlur"
+              type="range"
+              min="0"
+              max="60"
+              step="1" /></label
+          ><label class="inline-field"
+            ><span>阴影颜色</span
+            ><input v-model="selectedText.shadowColor" type="color" aria-label="阴影颜色"
+          /></label>
+        </details>
+        <button class="text-button" @click="resetPosition">恢复模板排版</button>
+      </template>
+
+      <template v-else>
+        <div class="panel-heading">
+          <span class="overline">MAKE IT YOURS</span>
+          <h2>留下你的标识</h2>
+          <p>固定栏目、品牌与个人风格。</p>
+        </div>
+        <label class="field"
+          ><span>顶部栏目</span
+          ><input v-model="config.eyebrow" maxlength="80" placeholder="例如 TRAVEL JOURNAL / 01"
+        /></label>
+        <label class="field"
+          ><span>期号 / 编号</span><input v-model="config.edition" maxlength="6" placeholder="01"
+        /></label>
+        <label class="field"
+          ><span>页脚文字</span
+          ><input v-model="config.footer" maxlength="100" placeholder="作者、日期或一句话"
+        /></label>
+        <h3>品牌 Logo</h3>
+        <button class="upload-card compact" @click="logoInput?.click()">
+          <span>◈</span><strong>{{ config.logo.file ? '替换 Logo' : '上传 Logo' }}</strong>
+        </button>
+        <template v-if="config.logo.file">
+          <div class="asset-info">{{ config.logo.file.name }}</div>
+          <label class="field"
+            ><span
+              >大小 <output>{{ Math.round(config.logo.size * 100) }}%</output></span
+            ><input v-model.number="config.logo.size" type="range" min="0.03" max="0.8" step="0.01"
+          /></label>
+          <label class="field"
+            ><span>透明度</span
+            ><input v-model.number="config.logo.opacity" type="range" min="0" max="1" step="0.05"
+          /></label>
+          <label class="field"
+            ><span>水平位置</span
+            ><input v-model.number="config.logo.x" type="range" min="0" max="1" step="0.01"
+          /></label>
+          <label class="field"
+            ><span>垂直位置</span
+            ><input v-model.number="config.logo.y" type="range" min="0" max="1" step="0.01"
+          /></label>
+          <label class="check-row"
+            ><input v-model="config.logo.rounded" type="checkbox" />圆形裁切</label
+          >
+          <button class="text-button" @click="removeLogo">移除 Logo</button>
+        </template>
+        <h3>保存个人模板</h3>
+        <label class="field"
+          ><span>模板名称</span
+          ><input
+            v-model="presetName"
+            maxlength="40"
+            placeholder="例如 我的旅行栏目"
+            @keydown.enter="savePreset"
+        /></label>
+        <button class="secondary-button full" @click="savePreset">＋ 保存当前样式与品牌</button>
+      </template>
+    </aside>
+
+    <main class="canvas-workspace">
+      <div class="workspace-heading">
+        <span
+          >{{ currentTemplate?.name || '我的封面' }}<i />{{ dimensions[0] }} ×
+          {{ dimensions[1] }}</span
+        ><button class="text-button" :aria-pressed="showGuides" @click="showGuides = !showGuides">
+          {{ showGuides ? '隐藏参考线' : '显示参考线' }}
+        </button>
+      </div>
+      <div ref="stageRef" class="canvas-stage" :class="{ 'is-cropping': cropMode }">
+        <div
+          class="artboard"
+          :style="artboardStyle"
+          tabindex="0"
+          role="group"
+          aria-label="封面编辑画布，方向键微调选中元素"
+          @pointerdown="pointerDown($event)"
+          @pointermove="pointerMove"
+          @pointerup="pointerUp"
+          @pointercancel="pointerUp"
+          @lostpointercapture="pointerUp"
+          @dblclick="editOnCanvas"
+        >
+          <canvas
+            ref="canvasRef"
+            :width="dimensions[0]"
+            :height="dimensions[1]"
+            aria-label="封面成品预览"
+          />
+          <div v-if="showGuides" class="safe-area" aria-hidden="true" />
+          <div
+            v-if="selectionStyle && ready"
+            class="selection-box"
+            :class="{ crop: selection === 'image' }"
+            :style="selectionStyle"
+            aria-hidden="true"
+          >
+            <span class="selection-label">{{
+              selection === 'title'
+                ? '主标题'
+                : selection === 'subtitle'
+                  ? '副标题'
+                  : selection === 'logo'
+                    ? 'Logo'
+                    : '拖动取景'
+            }}</span
+            ><button
+              v-if="selection !== 'image'"
+              class="resize-handle"
+              tabindex="-1"
+              aria-label="拖动调整大小"
+              @pointerdown.stop="pointerDown($event, true)"
             />
           </div>
-          <template v-else>
-            <div class="bg-preview-row">
-              <img v-if="config.bgType === 'image'" :src="config.bgUrl" class="bg-thumb" />
-              <video v-else :src="config.bgUrl" class="bg-thumb" muted />
-              <span class="file-name">{{ config.bgFile.name }}</span>
-              <button class="remove-btn" @click="clearBgFile(); config.bgType = 'color'">✕</button>
-            </div>
-            <!-- video frame picker -->
-            <template v-if="config.bgType === 'video'">
-              <label class="field-row">
-                <span>帧位</span>
-                <input
-                  type="range"
-                  v-model.number="config.bgVideoTime"
-                  min="0"
-                  :max="bgVideoDuration"
-                  step="0.1"
-                  class="range-input"
-                />
-                <span class="unit">{{ config.bgVideoTime.toFixed(1) }}s</span>
-              </label>
-            </template>
-          </template>
-
-          <label class="field-row">
-            <span>暗化</span>
-            <input type="range" v-model.number="config.bgOverlayOpacity" min="0" max="0.9" step="0.05" class="range-input" />
-            <span class="unit">{{ Math.round(config.bgOverlayOpacity * 100) }}%</span>
-          </label>
-        </template>
-      </div>
-
-      <div class="divider" />
-
-      <!-- Title -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="4 7 4 4 20 4 20 7"/>
-            <line x1="9" y1="20" x2="15" y2="20"/>
-            <line x1="12" y1="4" x2="12" y2="20"/>
-          </svg>
-          标题
+          <div v-if="snappedX" class="snap-line vertical" />
+          <div v-if="snappedY" class="snap-line horizontal" />
         </div>
-
-        <label class="field-row">
-          <span>文字</span>
-          <textarea v-model="config.title.text" class="text-area" rows="2" placeholder="标题文字（换行用 Enter）" />
-        </label>
-        <label class="field-row">
-          <span>字号</span>
-          <input type="number" v-model.number="config.title.fontSize" class="num-input" min="12" max="400" />
-          <span class="unit">px</span>
-        </label>
-        <label class="field-row">
-          <span>粗体</span>
-          <input type="checkbox" :checked="config.title.fontWeight === 'bold'" @change="config.title.fontWeight = ($event.target as HTMLInputElement).checked ? 'bold' : 'normal'" />
-          <span class="gap" />
-          <span>斜体</span>
-          <input type="checkbox" :checked="config.title.fontStyle === 'italic'" @change="config.title.fontStyle = ($event.target as HTMLInputElement).checked ? 'italic' : 'normal'" />
-        </label>
-        <label class="field-row">
-          <span>颜色</span>
-          <input type="color" v-model="config.title.color" class="color-input" />
-          <span class="gap" />
-          <span>对齐</span>
-          <select v-model="config.title.textAlign" class="select-input sm">
-            <option value="left">左</option>
-            <option value="center">中</option>
-            <option value="right">右</option>
-          </select>
-        </label>
-        <label class="field-row">
-          <span>水平</span>
-          <input type="range" v-model.number="config.title.x" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <label class="field-row">
-          <span>垂直</span>
-          <input type="range" v-model.number="config.title.y" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <div class="sub-label">发光 / 阴影</div>
-        <label class="field-row">
-          <span>颜色</span>
-          <input type="color" v-model="config.title.shadowColor" class="color-input" />
-          <span class="gap" />
-          <span>强度</span>
-          <input type="number" v-model.number="config.title.shadowBlur" class="num-input" min="0" max="100" />
-        </label>
-        <div class="sub-label">描边</div>
-        <label class="field-row">
-          <span>颜色</span>
-          <input type="color" v-model="config.title.strokeColor" class="color-input" />
-          <span class="gap" />
-          <span>宽度</span>
-          <input type="number" v-model.number="config.title.strokeWidth" class="num-input" min="0" max="20" />
-        </label>
-      </div>
-
-      <div class="divider" />
-
-      <!-- Subtitle -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/>
-            <line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/>
-          </svg>
-          副标题
+        <div v-if="busy || !ready" class="canvas-loading" role="status">
+          <span class="loading-dot" />{{ !ready ? '正在准备工作区' : '正在处理素材' }}
         </div>
-
-        <label class="field-row">
-          <span>文字</span>
-          <textarea v-model="config.subtitle.text" class="text-area" rows="2" placeholder="副标题（可留空）" />
-        </label>
-        <label class="field-row">
-          <span>字号</span>
-          <input type="number" v-model.number="config.subtitle.fontSize" class="num-input" min="8" max="200" />
-          <span class="unit">px</span>
-        </label>
-        <label class="field-row">
-          <span>颜色</span>
-          <input type="color" v-model="config.subtitle.color" class="color-input" />
-          <span class="gap" />
-          <span>对齐</span>
-          <select v-model="config.subtitle.textAlign" class="select-input sm">
-            <option value="left">左</option>
-            <option value="center">中</option>
-            <option value="right">右</option>
-          </select>
-        </label>
-        <label class="field-row">
-          <span>垂直</span>
-          <input type="range" v-model.number="config.subtitle.y" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <label class="field-row">
-          <span>水平</span>
-          <input type="range" v-model.number="config.subtitle.x" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <div class="sub-label">发光 / 阴影</div>
-        <label class="field-row">
-          <span>颜色</span>
-          <input type="color" v-model="config.subtitle.shadowColor" class="color-input" />
-          <span class="gap" />
-          <span>强度</span>
-          <input type="number" v-model.number="config.subtitle.shadowBlur" class="num-input" min="0" max="100" />
-        </label>
-      </div>
-
-      <div class="divider" />
-
-      <!-- Logo -->
-      <div class="sidebar-block">
-        <div class="block-title">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <polyline points="21 15 16 10 5 21"/>
-          </svg>
-          图片 / Logo
+        <div v-if="smallPreview && thumbnailPreview" class="small-preview">
+          <span>缩略预览</span><img :src="thumbnailPreview" alt="缩小后的封面效果" />
         </div>
-
-        <div
-          v-if="!config.logo.file"
-          class="drop-zone"
-          @dragover.prevent
-          @drop="handleLogoDrop"
-          @click="($refs.logoInput as HTMLInputElement).click()"
+      </div>
+      <div class="canvas-bottom">
+        <div class="layer-chips" aria-label="选择图层">
+          <button
+            v-for="layer in [
+              { id: 'image', label: '主图' },
+              { id: 'title', label: '主标题' },
+              { id: 'subtitle', label: '副标题' },
+            ]"
+            :key="layer.id"
+            :class="{ active: selection === layer.id }"
+            @click="selectLayer(layer.id as PosterSelection)"
+          >
+            {{ layer.label }}</button
+          ><button
+            v-if="config.logo.file"
+            :class="{ active: selection === 'logo' }"
+            @click="selectLayer('logo')"
+          >
+            Logo
+          </button>
+        </div>
+        <label class="zoom-control"
+          ><span>缩放</span
+          ><select v-model.number="zoom" aria-label="预览缩放">
+            <option :value="0.75">75%</option>
+            <option :value="1">适应</option>
+            <option :value="1.25">125%</option>
+            <option :value="1.5">150%</option>
+          </select></label
         >
-          <span>拖入图片或点击选择</span>
-          <input ref="logoInput" type="file" accept="image/*" style="display:none" @change="handleLogoInput" />
-        </div>
-        <div v-else class="logo-preview-row">
-          <img :src="config.logo.url" class="logo-thumb" />
-          <span class="file-name">{{ config.logo.file.name }}</span>
-          <button class="remove-btn" @click="clearLogo">✕</button>
-        </div>
-
-        <label class="field-row">
-          <span>大小</span>
-          <input type="range" v-model.number="config.logo.size" min="0.03" max="0.8" step="0.01" class="range-input" />
-          <span class="unit">{{ Math.round(config.logo.size * 100) }}%</span>
-        </label>
-        <label class="field-row">
-          <span>水平</span>
-          <input type="range" v-model.number="config.logo.x" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <label class="field-row">
-          <span>垂直</span>
-          <input type="range" v-model.number="config.logo.y" min="0" max="1" step="0.01" class="range-input" />
-        </label>
-        <label class="field-row">
-          <span>透明</span>
-          <input type="range" v-model.number="config.logo.opacity" min="0" max="1" step="0.05" class="range-input" />
-          <span class="unit">{{ Math.round(config.logo.opacity * 100) }}%</span>
-        </label>
-        <label class="field-row">
-          <span>圆形</span>
-          <input type="checkbox" v-model="config.logo.rounded" />
-        </label>
       </div>
+      <div class="feedback-bar" :class="{ warning: overflow }">
+        <span v-if="overflow">部分文字超出画布或文本框，请调整字号、宽度或位置</span
+        ><span v-else-if="cropMode">拖动图片调整取景，完成后点击「完成取景」</span
+        ><span v-else>单击选择 · 拖动排版 · 双击编辑文字 · 方向键微调</span
+        ><span class="photo-credit">{{ config.bgFile ? '你的素材' : '原创示例影像' }}</span>
+      </div>
+    </main>
 
+    <aside
+      v-if="panel === 'templates'"
+      class="quick-inspector"
+      aria-label="选中元素属性"
+      :inert="busy || exporting || !ready || undefined"
+    >
+      <div class="inspector-heading">
+        <span class="overline">PROPERTIES</span>
+        <h2>
+          {{
+            selection === 'image'
+              ? '主图取景'
+              : selection === 'logo'
+                ? '品牌标识'
+                : selection === 'title'
+                  ? '主标题排版'
+                  : '副标题排版'
+          }}
+        </h2>
+      </div>
+      <template v-if="textSelection">
+        <label class="field"
+          ><span>内容</span
+          ><textarea
+            v-model="selectedText.text"
+            aria-label="快速编辑文字"
+            maxlength="500"
+            rows="4"
+          />
+        </label>
+        <label class="field"
+          ><span>字体</span
+          ><select v-model="selectedText.fontFamily" aria-label="快速设置字体">
+            <option v-for="font in POSTER_FONTS" :key="font.value" :value="font.value">
+              {{ font.name }}
+            </option>
+          </select></label
+        >
+        <label class="field"
+          ><span>字号</span
+          ><input
+            v-model.number="selectedText.fontSize"
+            aria-label="快速设置字号"
+            type="number"
+            min="12"
+            max="400"
+        /></label>
+        <div class="color-fields">
+          <label
+            >文字<input
+              v-model="selectedText.color"
+              type="color"
+              aria-label="快速设置文字颜色" /></label
+          ><label
+            >强调<input
+              v-model="selectedText.highlightColor"
+              type="color"
+              aria-label="快速设置强调颜色"
+          /></label>
+        </div>
+        <label class="field"
+          ><span>强调词语</span
+          ><input v-model="selectedText.highlight" maxlength="100" placeholder="例如 旷野"
+        /></label>
+        <label class="field"
+          ><span>文本框宽度</span
+          ><input v-model.number="selectedText.width" type="range" min="0.1" max="0.95" step="0.01"
+        /></label>
+        <label class="check-row"
+          ><input v-model="selectedText.autoFit" type="checkbox" />自动适配文本框</label
+        >
+        <div class="segmented">
+          <button @click="alignText('x')">水平居中</button
+          ><button @click="alignText('y')">垂直居中</button>
+        </div>
+        <button class="text-button" @click="panel = 'text'">更多文字设置 ↗</button>
+      </template>
+      <template v-else-if="selection === 'image'">
+        <button class="upload-card compact" @click="fileInput?.click()">
+          <span>＋</span><strong>替换主图</strong>
+        </button>
+        <div class="segmented">
+          <button :class="{ active: config.bgFit !== 'contain' }" @click="config.bgFit = 'cover'">
+            铺满</button
+          ><button
+            :class="{ active: config.bgFit === 'contain' }"
+            @click="config.bgFit = 'contain'"
+          >
+            完整
+          </button>
+        </div>
+        <label class="field"
+          ><span
+            >图片缩放 <output>{{ (config.bgZoom ?? 1).toFixed(2) }}×</output></span
+          ><input v-model.number="config.bgZoom" type="range" min="1" max="3" step="0.01"
+        /></label>
+        <button class="secondary-button full" :aria-pressed="cropMode" @click="toggleCrop">
+          {{ cropMode ? '✓ 完成取景' : '拖动图片取景' }}
+        </button>
+        <label class="field"
+          ><span>背景暗化</span
+          ><input
+            v-model.number="config.bgOverlayOpacity"
+            type="range"
+            min="0"
+            max="0.9"
+            step="0.01"
+        /></label>
+        <button class="text-button" @click="panel = 'media'">全部素材设置 ↗</button>
+      </template>
+      <template v-else>
+        <button class="secondary-button full" @click="logoInput?.click()">替换 Logo</button>
+        <label class="field"
+          ><span>大小</span
+          ><input v-model.number="config.logo.size" type="range" min="0.03" max="0.8" step="0.01"
+        /></label>
+        <label class="field"
+          ><span>透明度</span
+          ><input v-model.number="config.logo.opacity" type="range" min="0" max="1" step="0.05"
+        /></label>
+        <label class="check-row"
+          ><input v-model="config.logo.rounded" type="checkbox" />圆形裁切</label
+        >
+        <button class="text-button" @click="panel = 'brand'">全部品牌设置 ↗</button>
+      </template>
+      <div class="inspector-note"><span>↔</span>拖动排版，方向键精细移动。</div>
+    </aside>
+
+    <div
+      v-if="error || notice"
+      class="toast"
+      :class="{ error: !!error }"
+      :role="error ? 'alert' : 'status'"
+    >
+      <span>{{ error || notice }}</span
+      ><button v-if="error && saveStatus === '保存失败'" @click="saveDraft">重试保存</button
+      ><button aria-label="关闭提示" @click="dismissNotice">×</button>
     </div>
+
+    <dialog
+      ref="exportDialog"
+      class="export-dialog"
+      aria-labelledby="export-title"
+      @cancel.prevent="!exporting && (exportOpen = false)"
+    >
+      <template v-if="exportOpen"
+        ><div class="dialog-heading">
+          <div>
+            <span class="overline">READY TO SHARE</span>
+            <h2 id="export-title">让作品被看见</h2>
+          </div>
+          <button
+            class="icon-button"
+            aria-label="关闭导出"
+            :disabled="exporting"
+            @click="exportOpen = false"
+          >
+            ×
+          </button>
+        </div>
+        <img :src="thumbnailPreview" class="export-preview" alt="即将导出的封面" />
+        <p class="export-size">{{ dimensions[0] }} × {{ dimensions[1] }} px</p>
+        <label class="field"
+          ><span>文件名称</span
+          ><input v-model="exportName" maxlength="100" aria-label="导出文件名称"
+        /></label>
+        <div class="segmented">
+          <button
+            :class="{ active: format === 'png' }"
+            :disabled="exporting"
+            @click="format = 'png'"
+          >
+            PNG · 无损</button
+          ><button
+            :class="{ active: format === 'jpeg' }"
+            :disabled="exporting"
+            @click="format = 'jpeg'"
+          >
+            JPG · 小体积
+          </button>
+        </div>
+        <label v-if="format === 'jpeg'" class="field"
+          ><span
+            >图片质量 <output>{{ Math.round(quality * 100) }}%</output></span
+          ><input v-model.number="quality" type="range" min="0.5" max="1" step="0.01"
+        /></label>
+        <p v-if="overflow" class="export-warning">文字存在越界，请返回画布检查排版。</p>
+        <p v-if="error" class="export-warning" role="alert">{{ error }}</p>
+        <button class="primary-button full" :disabled="exporting" @click="exportPoster">
+          {{ exporting ? '正在导出…' : '下载封面图片 ↗' }}
+        </button>
+      </template>
+    </dialog>
   </div>
 </template>
 
 <style scoped>
-.poster-page {
-  display: grid;
-  grid-template-columns: 1fr 360px;
+.poster-studio {
   height: 100%;
-  overflow: hidden;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 64px 260px minmax(0, 1fr);
+  grid-template-rows: 68px minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--text);
+  --studio-line: var(--border);
 }
-
-/* ── Preview ── */
-.preview-col {
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.studio-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  gap: 16px;
+  border-bottom: 1px solid var(--studio-line);
+  background: var(--surface);
+}
+.document-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex-shrink: 0;
+}
+.studio-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 36px;
+  font-family: Georgia, serif;
+  font-size: 26px;
+  color: var(--text);
+  border: 1px solid var(--border-hover);
+  border-radius: 3px 12px 3px 3px;
+}
+h1 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.save-state {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-2);
+}
+.toolbar-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.toolbar-rule {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 8px;
+}
+.icon-button {
+  width: 32px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 23px;
+  display: grid;
+  place-items: center;
+}
+.icon-button:hover:not(:disabled) {
+  background: var(--hover-bg-2);
+}
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.artboard:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.primary-button,
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 15px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  min-height: 36px;
+}
+.primary-button {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.primary-button:hover:not(:disabled) {
+  background: var(--accent-hi);
+}
+.primary-button > span {
+  font-size: 17px;
+}
+.secondary-button {
+  background: var(--surface-2);
+  border: 1px solid var(--border-hover);
+  color: var(--text-2);
+}
+.secondary-button:hover {
+  color: var(--text);
+  background: var(--hover-bg-2);
+}
+.full {
+  width: 100%;
+}
+.ratio-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.ratio-control select {
+  min-width: 80px;
+}
+select,
+input:not([type='range']):not([type='checkbox']):not([type='color']),
+textarea {
+  border: 1px solid var(--border-hover);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  min-width: 0;
+}
+select {
+  cursor: pointer;
+}
+.tool-rail {
   display: flex;
   flex-direction: column;
-  padding: 16px 16px 14px 20px;
+  align-items: center;
   gap: 12px;
-  overflow: hidden;
+  padding: 22px 0;
+  background: var(--surface);
+  border-right: 1px solid var(--studio-line);
+}
+.tool-rail button {
+  width: 48px;
+  min-height: 57px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-2);
+  border-radius: 8px;
+}
+.tool-rail button span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 30px;
+  font-size: 22px;
+  font-family: Georgia, serif;
+}
+.tool-rail button.active {
+  color: var(--accent-light);
+  background: var(--accent-dim);
+}
+.tool-rail button:hover {
+  color: var(--text);
+}
+.library-panel {
+  overflow-y: auto;
+  padding: 23px 18px 32px;
+  border-right: 1px solid var(--studio-line);
+  background: var(--surface);
   min-height: 0;
 }
-
-.canvas-wrapper {
+.overline {
+  font-family: 'Avenir Next', sans-serif;
+  font-size: 8px;
+  letter-spacing: 0.19em;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.panel-heading {
+  margin-bottom: 21px;
+}
+h2 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  margin-top: 7px;
+}
+.panel-heading p {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 7px;
+}
+h3 {
+  font-size: 12px;
+  margin: 25px 0 12px;
+  font-weight: 600;
+}
+.category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 19px;
+}
+.category-tabs button {
+  padding: 5px 9px;
+  border-radius: 5px;
+  color: var(--text-2);
+  font-size: 10px;
+  border: 1px solid transparent;
+}
+.category-tabs button.active {
+  background: var(--hover-bg-2);
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+.template-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+.template-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-radius: 5px;
+}
+.template-art {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s;
+}
+.template-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.template-card.selected .template-art {
+  border-color: var(--accent-light);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.template-card:hover .template-art {
+  border-color: var(--accent-light);
+}
+.template-check {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+}
+.template-caption {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding-top: 7px;
+}
+.template-caption strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+.template-caption > span {
+  font-size: 9px;
+  color: var(--text-2);
+}
+.canvas-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+.workspace-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 25px;
+  gap: 8px;
+}
+.workspace-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 10px;
+}
+.workspace-heading i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.text-button {
+  color: var(--text-2);
+  font-size: 11px;
+  padding: 6px 0;
+}
+.text-button:hover {
+  color: var(--accent-light);
+}
+.canvas-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: auto;
+  background-image: radial-gradient(var(--border-hover) 0.6px, transparent 0.6px);
+  background-size: 14px 14px;
 }
-
-.canvas-shell {
-  max-width: 100%;
-  max-height: 100%;
-  background: var(--canvas-bg);
-  border-radius: var(--r-md, 8px);
-  border: 1px solid var(--border);
-  box-shadow: 0 4px 28px rgba(0,0,0,0.5);
-  overflow: hidden;
+.artboard {
+  position: relative;
+  flex-shrink: 0;
+  box-shadow:
+    0 8px 32px #0003,
+    0 1px 4px #0002;
+  touch-action: none;
+  cursor: default;
 }
-
-.preview-canvas {
+.artboard canvas {
   display: block;
   width: 100%;
   height: 100%;
 }
-
-/* ── Export bar ── */
-.export-bar {
+.safe-area {
+  position: absolute;
+  inset: 6%;
+  border: 1px dashed #ffffff35;
+  pointer-events: none;
+}
+.selection-box {
+  position: absolute;
+  border: 1px solid #a99bff;
+  pointer-events: none;
+}
+.selection-label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  font-size: 9px;
+  background: #7060ff;
+  color: white;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.resize-handle {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  width: 10px;
+  height: 10px;
+  background: white;
+  border: 1.5px solid #7060ff;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+.selection-box.crop {
+  border-style: dashed;
+}
+.is-cropping .artboard {
+  cursor: grab;
+}
+.is-cropping .artboard:active {
+  cursor: grabbing;
+}
+.snap-line {
+  position: absolute;
+  background: #e7a4e0;
+  pointer-events: none;
+}
+.snap-line.vertical {
+  width: 1px;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+}
+.snap-line.horizontal {
+  height: 1px;
+  left: 0;
+  right: 0;
+  top: 50%;
+}
+.canvas-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 14px;
+  gap: 8px;
+}
+.layer-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.layer-chips button {
+  font-size: 10px;
+  color: var(--text-2);
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+}
+.layer-chips button.active {
+  color: var(--accent-light);
+  border-color: var(--border-focus);
+}
+.zoom-control {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-2);
 }
-
-.export-btn {
-  display: inline-flex;
+.zoom-control select {
+  padding: 4px 8px;
+  font-size: 10px;
+}
+.feedback-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 24px;
+  color: var(--text-2);
+  font-size: 10px;
+  border-top: 1px solid var(--border);
+}
+.feedback-bar.warning {
+  color: var(--amber);
+}
+.photo-credit {
+  white-space: nowrap;
+  opacity: 0.7;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.field > span {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 5px;
-  padding: 6px 16px;
-  border-radius: var(--r-sm, 6px);
-  font-size: 12.5px;
-  font-weight: 600;
-  border: none;
+}
+.field input:not([type='range']),
+.field select,
+.field textarea {
+  width: 100%;
+  font-size: 12px;
+}
+.field textarea {
+  resize: vertical;
+  line-height: 1.65;
+}
+.field output {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+  height: 16px;
   cursor: pointer;
-  transition: opacity 0.15s;
 }
-.export-btn.png { background: var(--accent, #a898ff); color: var(--on-accent); }
-.export-btn.jpg { background: var(--teal, #40d9c0); color: #111; }
-.export-btn:hover:not(:disabled) { opacity: 0.85; }
-.export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.size-hint {
-  font-size: 11.5px;
-  color: var(--text-4, #555);
-  margin-left: 4px;
+input[type='color'] {
+  width: 32px;
+  height: 28px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-hover);
+  border-radius: 5px;
+  cursor: pointer;
 }
-
-/* ── Sidebar ── */
-.sidebar {
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  padding-bottom: 24px;
+input[type='checkbox'] {
+  accent-color: var(--accent);
 }
-
-.sidebar-block {
-  padding: 14px 16px 10px;
+.field-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.field-pair .field {
+  margin-top: 0;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  margin: 12px 0;
+  cursor: pointer;
+}
+.inline-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 12px 0;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.text-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.text-tools > button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-hover);
+  border-radius: 5px;
+}
+.text-tools > select {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 6px;
+}
+.chosen {
+  color: var(--accent-light);
+  background: var(--accent-dim);
+}
+.segmented {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin: 12px 0;
+}
+.segmented > button {
+  flex: 1;
+  min-height: 31px;
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.segmented > button.active {
+  background: var(--surface-4);
+  color: var(--text);
+}
+.upload-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  border: 1px dashed var(--border-hover);
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 26px 12px;
+}
+.upload-card > span {
+  font-size: 28px;
+  color: var(--accent-light);
+  font-weight: 300;
+}
+.upload-card strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.upload-card small {
+  font-size: 10px;
+  color: var(--text-2);
+}
+.upload-card:hover {
+  border-color: var(--accent-light);
+}
+.upload-card.compact {
+  padding: 12px;
+}
+.asset-info {
+  font-size: 10px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0;
+}
+.status-dot {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--teal);
+}
+.color-fields {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 16px 0;
+}
+.color-fields label {
+  font-size: 10px;
+  color: var(--text-2);
   display: flex;
   flex-direction: column;
   gap: 7px;
 }
-
-.block-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-3, #888);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 4px;
+details {
+  border-top: 1px solid var(--border);
+  margin: 20px 0 12px;
+  padding-top: 13px;
 }
-
-.sub-label {
+summary {
   font-size: 11px;
-  color: var(--text-4, #555);
-  margin-top: 4px;
-  padding-left: 2px;
-}
-
-.divider {
-  height: 1px;
-  background: var(--border);
-}
-
-/* ── Ratio selector ── */
-.ratio-row {
-  display: flex;
-  gap: 4px;
-}
-
-.ratio-btn {
-  flex: 1;
-  padding: 5px 0;
-  border-radius: var(--r-sm, 4px);
-  border: 1px solid var(--border);
-  background: var(--surface-2, #1e1e2e);
-  color: var(--text-3, #888);
-  font-size: 11.5px;
+  color: var(--text-2);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.ratio-btn:hover { color: var(--text-2, #bbb); background: var(--surface-3, #2a2a3a); }
-.ratio-btn.active {
-  color: var(--accent-light);
-  background: var(--accent-dim, rgba(168,152,255,0.12));
-  border-color: rgba(168,152,255,0.35);
-}
-
-/* ── Bg type toggle ── */
-.bg-type-row {
+.saved-row {
   display: flex;
-  gap: 4px;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
 }
-
-.bg-type-btn {
+.saved-row button {
+  padding: 10px 0;
+  font-size: 11px;
+}
+.saved-row button:first-child {
   flex: 1;
-  padding: 5px 0;
-  border-radius: var(--r-sm, 4px);
-  border: 1px solid var(--border);
-  background: var(--surface-2, #1e1e2e);
-  color: var(--text-3, #888);
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  text-align: left;
+  overflow-wrap: anywhere;
 }
-.bg-type-btn:hover { color: var(--text-2, #bbb); background: var(--surface-3, #2a2a3a); }
-.bg-type-btn.active {
-  color: var(--accent-light);
-  background: var(--accent-dim, rgba(168,152,255,0.12));
-  border-color: rgba(168,152,255,0.35);
+.saved-row button:last-child {
+  padding: 10px;
 }
-
-/* ── Fields ── */
-.field-row {
+.frame-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  margin: 12px 0;
+}
+.frame-strip button {
+  min-width: 0;
+}
+.frame-strip img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  display: block;
+  border-radius: 3px;
+}
+.frame-strip span {
+  color: var(--text-2);
+  font-size: 9px;
+}
+.canvas-loading {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--text-2, #bbb);
-  cursor: pointer;
+  justify-content: center;
+  gap: 10px;
+  background: var(--overlay-bg);
+  color: white;
+  font-size: 12px;
+  z-index: 4;
 }
-
-.field-row > span:first-child {
-  min-width: 38px;
-  color: var(--text-3, #888);
-  flex-shrink: 0;
-}
-
-.gap { flex: 1; }
-
-.text-area {
-  flex: 1;
-  background: var(--surface-2, #1e1e2e);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 4px);
-  color: var(--text, #eee);
-  padding: 5px 8px;
-  font-size: 12.5px;
-  resize: vertical;
-  outline: none;
-  font-family: inherit;
-  line-height: 1.4;
-}
-.text-area:focus { border-color: rgba(168,152,255,0.5); }
-
-.num-input {
-  width: 58px;
-  background: var(--surface-2, #1e1e2e);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 4px);
-  color: var(--text, #eee);
-  padding: 4px 6px;
-  font-size: 12.5px;
-  outline: none;
-}
-.num-input:focus { border-color: rgba(168,152,255,0.5); }
-
-.select-input {
-  flex: 1;
-  background: var(--surface-2, #1e1e2e);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 4px);
-  color: var(--text, #eee);
-  padding: 4px 6px;
-  font-size: 12.5px;
-  outline: none;
-}
-.select-input.sm { flex: none; width: 50px; }
-
-.color-input {
-  width: 36px;
-  height: 22px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: none;
-  cursor: pointer;
-  padding: 1px;
-}
-
-.range-input {
-  flex: 1;
-  height: 3px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: var(--surface-3, #2a2a3a);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-.range-input::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
+.loading-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--accent-light);
-  cursor: pointer;
+  animation: breathe 1s infinite alternate;
 }
-
-.unit {
-  font-size: 11px;
-  color: var(--text-4, #555);
-  flex-shrink: 0;
-  min-width: 28px;
-  text-align: right;
+@keyframes breathe {
+  to {
+    opacity: 0.3;
+  }
 }
-
-.hint {
-  font-size: 11px;
-  color: var(--teal, #40d9c0);
-  flex-shrink: 0;
+.small-preview {
+  position: absolute;
+  right: 18px;
+  top: 12px;
+  width: 180px;
+  border: 1px solid var(--border-hover);
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 5px 20px #0003;
+  pointer-events: none;
 }
-
-/* ── Drop zones ── */
-.drop-zone {
-  border: 1px dashed var(--border);
-  border-radius: var(--r-sm, 6px);
-  padding: 12px 10px;
-  text-align: center;
-  color: var(--text-3, #888);
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-}
-.drop-zone:hover {
-  border-color: rgba(168,152,255,0.4);
-  background: rgba(168,152,255,0.05);
-}
-
-.bg-preview-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-
-.bg-thumb {
-  width: 56px;
-  height: 36px;
-  object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  flex-shrink: 0;
-  background: var(--surface-2, #1e1e2e);
-}
-
-.logo-preview-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-}
-
-.logo-thumb {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-  border-radius: 4px;
-  background: var(--surface-2, #1e1e2e);
-  border: 1px solid var(--border);
-}
-
-.file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2, #bbb);
-  font-size: 12px;
-}
-
-.remove-btn {
-  background: none;
-  border: none;
-  color: var(--text-3, #888);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0 2px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-.remove-btn:hover { color: var(--text, #eee); }
-
-/* ── Templates ── */
-.tpl-group-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--text-4, #555);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 8px 2px 5px;
-}
-.tpl-group-label:first-child { padding-top: 0; }
-
-.template-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.template-swatch {
-  position: relative;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  overflow: hidden;
-  transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
-  padding: 0;
-  text-align: left;
-}
-.template-swatch:hover {
-  border-color: rgba(168,152,255,0.45);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-}
-.template-swatch:active {
-  transform: translateY(0);
-}
-
-.swatch-diagram {
-  width: 100%;
-  height: 70px;
+.small-preview > span {
   display: block;
-  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-2);
+  margin-bottom: 6px;
 }
-
-.swatch-info {
+.small-preview img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 110;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px 7px;
-  background: rgba(0,0,0,0.42);
-  border-top: 1px solid rgba(255,255,255,0.07);
+  align-items: center;
+  gap: 16px;
+  padding: 11px 16px;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border-hover);
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 4px 24px #0003;
+  max-width: min(90vw, 600px);
 }
-.swatch-info--light {
-  background: rgba(255,255,255,0.62);
-  border-top-color: rgba(0,0,0,0.1);
+.toast.error {
+  color: var(--amber);
 }
-.swatch-info--light .swatch-desc {
-  color: rgba(0,0,0,0.42);
+.toast > span {
+  overflow-wrap: anywhere;
 }
-
-.swatch-name {
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+.toast button {
+  font-size: 15px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-
-.swatch-desc {
+.export-dialog {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border: 1px solid var(--border-hover);
+  border-radius: 14px;
+  padding: 25px;
+  background: var(--surface);
+  color: var(--text);
+  z-index: 101;
+  box-shadow: 0 20px 90px #0005;
+}
+.export-dialog:not([open]) {
+  display: none;
+}
+.dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.dialog-heading h2 {
+  margin-top: 4px;
+}
+.export-dialog::backdrop {
+  background: #0009;
+  backdrop-filter: blur(4px);
+}
+.export-preview {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  display: block;
+  background: var(--surface-2);
+  border-radius: 5px;
+}
+.export-size {
+  margin-top: 8px;
+  text-align: center;
+  color: var(--text-2);
   font-size: 10px;
-  color: rgba(255,255,255,0.38);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+.export-warning {
+  font-size: 11px;
+  color: var(--amber);
+  margin: 12px 0;
+}
+.quick-inspector {
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 25px 20px;
+  overflow-y: auto;
+  min-width: 0;
+}
+.inspector-heading {
+  margin-bottom: 26px;
+}
+.inspector-heading h2 {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+.inspector-note {
+  display: flex;
+  gap: 8px;
+  margin-top: 30px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-2);
+}
+@media (max-width: 1180px) {
+  .quick-inspector {
+    display: none;
+  }
+}
+
+@media (min-width: 1181px) {
+  .poster-studio.has-inspector {
+    grid-template-columns: 64px 260px minmax(0, 1fr) 230px;
+  }
+}
+@media (min-width: 1600px) {
+  .poster-studio.has-inspector {
+    grid-template-columns: 72px 286px minmax(0, 1fr) 260px;
+  }
+  .poster-studio {
+    grid-template-columns: 72px 286px minmax(0, 1fr);
+  }
+  .library-panel {
+    padding: 26px 23px;
+  }
+}
+@media (max-width: 1180px) and (min-width: 761px) {
+  .poster-studio {
+    grid-template-columns: 52px 245px minmax(0, 1fr);
+  }
+  .studio-toolbar {
+    padding: 0 16px;
+  }
+  .thumbnail-toggle,
+  .ratio-control > span {
+    display: none;
+  }
+  .toolbar-controls {
+    gap: 5px;
+  }
+  .toolbar-rule {
+    margin: 0 3px;
+  }
+  .document-heading {
+    gap: 7px;
+  }
+  .tool-rail button {
+    width: 43px;
+  }
+  .workspace-heading {
+    padding: 14px;
+  }
+}
+@media (max-width: 760px) {
+  .poster-studio {
+    height: calc(100dvh - 96px);
+    min-height: 500px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 60px minmax(220px, 48%) 55px minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .studio-toolbar {
+    grid-row: 1;
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .studio-mark,
+  .save-state,
+  .toolbar-rule,
+  .thumbnail-toggle,
+  .ratio-control > span {
+    display: none;
+  }
+  .document-heading h1 {
+    font-size: 12px;
+  }
+  .toolbar-controls {
+    gap: 4px;
+  }
+  .icon-button {
+    width: 28px;
+    height: 34px;
+    font-size: 21px;
+  }
+  .ratio-control select {
+    min-width: 64px;
+    padding: 5px;
+    font-size: 12px !important;
+  }
+  .primary-button {
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 11px;
+  }
+  .canvas-workspace {
+    grid-row: 2;
+    grid-column: 1;
+    overflow: hidden;
+  }
+  .workspace-heading {
+    padding: 6px 12px;
+  }
+  .workspace-heading .text-button {
+    padding: 2px 0;
+    font-size: 9px;
+  }
+  .workspace-heading > span {
+    font-size: 9px;
+  }
+  .canvas-bottom {
+    padding: 6px 12px;
+  }
+  .feedback-bar {
+    padding: 4px 12px;
+    font-size: 8px;
+  }
+  .photo-credit,
+  .zoom-control > span {
+    display: none;
+  }
+  .zoom-control select {
+    min-height: 26px;
+    font-size: 11px !important;
+  }
+  .layer-chips button {
+    padding: 3px 8px;
+    font-size: 9px;
+  }
+  .tool-rail {
+    grid-row: 3;
+    grid-column: 1;
+    flex-direction: row;
+    justify-content: center;
+    gap: 14px;
+    padding: 3px 12px;
+    border-right: 0;
+    border-block: 1px solid var(--border);
+  }
+  .tool-rail button {
+    width: 65px;
+    min-height: 46px;
+    gap: 0;
+    font-size: 9px;
+  }
+  .tool-rail button span {
+    height: 27px;
+    font-size: 20px;
+  }
+  .library-panel {
+    grid-row: 4;
+    grid-column: 1;
+    padding: 17px 16px 30px;
+    overflow-y: auto;
+    border-right: 0;
+  }
+  .panel-heading {
+    margin-bottom: 14px;
+  }
+  .panel-heading h2 {
+    font-size: 17px;
+  }
+  .panel-heading p,
+  .panel-heading .overline {
+    display: none;
+  }
+  .template-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .template-caption {
+    gap: 3px;
+    flex-direction: column;
+  }
+  .category-tabs {
+    margin-bottom: 14px;
+    gap: 3px;
+  }
+  .category-tabs button {
+    font-size: 10px;
+    padding: 5px 7px;
+  }
+  .field {
+    margin: 12px 0;
+  }
+  .field input:not([type='range']),
+  .field select,
+  .field textarea {
+    font-size: 16px;
+  }
+  .small-preview {
+    width: 110px;
+    right: 8px;
+    top: 4px;
+  }
+  .toast {
+    bottom: 12px;
+    font-size: 11px;
+    padding: 9px 12px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 </style>

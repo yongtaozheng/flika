@@ -1,246 +1,158 @@
-import { ref, type Ref } from 'vue'
-import type { PosterConfig, PosterTextLayer, PosterImageLayer } from '../types'
+import { onBeforeUnmount, ref, shallowRef, type Ref } from 'vue'
+import type { PosterConfig } from '../types'
+import {
+  renderPosterCanvas,
+  type PosterMedia,
+  type PosterRenderResult,
+} from '../utils/posterRenderer'
 
 export function usePosterEngine(
   canvasRef: Ref<HTMLCanvasElement | null>,
   config: Ref<PosterConfig>,
 ) {
-  const logoImage = ref<HTMLImageElement | null>(null)
-  const bgMedia = ref<HTMLImageElement | HTMLVideoElement | null>(null)
+  const logoImage = shallowRef<HTMLImageElement | null>(null)
+  const bgMedia = shallowRef<PosterMedia | null>(null)
+  const bounds = ref<PosterRenderResult>({})
+  let bgRevision = 0
+  let logoRevision = 0
+  let bgObjectUrl = ''
+  let logoObjectUrl = ''
+  let seekRevision = 0
 
-  // ── Media loading ──────────────────────────────────────────────────────────
-
-  async function loadLogoImage(file: File): Promise<void> {
-    return new Promise((resolve) => {
-      const url = URL.createObjectURL(file)
-      const img = new Image()
-      img.onload = () => { logoImage.value = img; resolve() }
-      img.onerror = () => resolve()
-      img.src = url
+  function loadImage(url: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => resolve(image)
+      image.onerror = () => reject(new Error('图片加载失败，请选择有效的图片文件'))
+      image.src = url
     })
   }
-
-  function clearLogo() { logoImage.value = null }
-
-  async function loadBgMedia(file: File, type: 'image' | 'video'): Promise<void> {
+  async function loadLogoImage(file: File) {
+    const revision = ++logoRevision
     const url = URL.createObjectURL(file)
-    if (type === 'image') {
-      return new Promise((resolve) => {
-        const img = new Image()
-        img.onload = () => { bgMedia.value = img; resolve() }
-        img.onerror = () => resolve()
-        img.src = url
-      })
-    } else {
-      return new Promise((resolve) => {
-        const vid = document.createElement('video')
-        vid.preload = 'auto'
-        vid.muted = true
-        vid.onloadeddata = () => { bgMedia.value = vid; resolve() }
-        vid.onerror = () => resolve()
-        vid.src = url
-      })
+    try {
+      const image = await loadImage(url)
+      if (revision !== logoRevision) return
+      if (logoObjectUrl) URL.revokeObjectURL(logoObjectUrl)
+      logoObjectUrl = url
+      logoImage.value = image
+    } finally {
+      if (logoObjectUrl !== url) URL.revokeObjectURL(url)
     }
   }
-
+  function clearLogo() {
+    logoRevision++
+    logoImage.value = null
+    if (logoObjectUrl) URL.revokeObjectURL(logoObjectUrl)
+    logoObjectUrl = ''
+  }
+  async function loadBgMedia(source: File | string, type: 'image' | 'video') {
+    const revision = ++bgRevision
+    const url = typeof source === 'string' ? source : URL.createObjectURL(source)
+    let media: PosterMedia
+    try {
+      media =
+        type === 'image'
+          ? await loadImage(url)
+          : await new Promise<HTMLVideoElement>((resolve, reject) => {
+              const video = document.createElement('video')
+              video.preload = 'auto'
+              video.muted = true
+              video.playsInline = true
+              video.onloadeddata = () => resolve(video)
+              video.onerror = () => reject(new Error('视频无法解码，请尝试 MP4 或 WebM 文件'))
+              video.src = url
+            })
+      if (revision !== bgRevision) return
+      if (bgMedia.value instanceof HTMLVideoElement) bgMedia.value.pause()
+      if (bgObjectUrl) URL.revokeObjectURL(bgObjectUrl)
+      bgObjectUrl = typeof source === 'string' ? '' : url
+      bgMedia.value = media
+    } finally {
+      if (typeof source !== 'string' && bgObjectUrl !== url) URL.revokeObjectURL(url)
+    }
+  }
   function clearBgMedia() {
-    if (bgMedia.value instanceof HTMLVideoElement) bgMedia.value.pause()
+    bgRevision++
+    seekRevision++
+    if (bgMedia.value instanceof HTMLVideoElement) {
+      bgMedia.value.pause()
+      bgMedia.value.removeAttribute('src')
+      bgMedia.value.load()
+    }
     bgMedia.value = null
+    if (bgObjectUrl) URL.revokeObjectURL(bgObjectUrl)
+    bgObjectUrl = ''
   }
-
-  async function seekBgVideoAsync(t: number): Promise<void> {
-    if (!(bgMedia.value instanceof HTMLVideoElement)) return
-    const vid = bgMedia.value
-    vid.currentTime = t
-    return new Promise((resolve) => {
-      const handler = () => { vid.removeEventListener('seeked', handler); resolve() }
-      vid.addEventListener('seeked', handler)
+  async function seekBgVideoAsync(time: number): Promise<void> {
+    const video = bgMedia.value
+    if (!(video instanceof HTMLVideoElement)) return
+    const revision = ++seekRevision
+    const target = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.001)))
+    if (Math.abs(video.currentTime - target) < 0.001 && video.readyState >= 2) return
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        video.removeEventListener('seeked', done)
+        video.removeEventListener('error', failed)
+        clearTimeout(timeout)
+      }
+      const done = () => {
+        cleanup()
+        resolve()
+      }
+      const failed = () => {
+        cleanup()
+        reject(new Error('视频选帧失败，请重试'))
+      }
+      const timeout = setTimeout(() => {
+        cleanup()
+        if (revision !== seekRevision) resolve()
+        else reject(new Error('视频选帧超时，请重试'))
+      }, 8000)
+      video.addEventListener('seeked', done)
+      video.addEventListener('error', failed)
+      video.currentTime = target
     })
   }
-
-  // ── Drawing helpers ────────────────────────────────────────────────────────
-
-  function drawBgCover(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    source: HTMLImageElement | HTMLVideoElement,
-  ) {
-    const sw = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth
-    const sh = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight
-    if (!sw || !sh) return
-    const srcRatio = sw / sh
-    const dstRatio = width / height
-    let drawW: number, drawH: number, dx: number, dy: number
-    if (srcRatio > dstRatio) {
-      drawH = height; drawW = height * srcRatio
-      dx = (width - drawW) / 2; dy = 0
-    } else {
-      drawW = width; drawH = width / srcRatio
-      dx = 0; dy = (height - drawH) / 2
-    }
-    ctx.drawImage(source, dx, dy, drawW, drawH)
-  }
-
-  function drawTextLayer(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    layer: PosterTextLayer,
-  ) {
-    if (!layer.text.trim()) return
-    const cx = layer.x * width
-    const cy = layer.y * height
-    const lines = layer.text.split('\n')
-    const lineHeight = layer.fontSize * 1.3
-    const totalH = lines.length * lineHeight
-    const startY = cy - totalH / 2 + lineHeight / 2
-
-    ctx.save()
-    ctx.font = `${layer.fontStyle} ${layer.fontWeight} ${layer.fontSize}px sans-serif`
-    ctx.textAlign = layer.textAlign as CanvasTextAlign
-    ctx.textBaseline = 'middle'
-
-    for (let i = 0; i < lines.length; i++) {
-      const lineY = startY + i * lineHeight
-      const text = lines[i]
-
-      // stroke (drawn without shadow so it stays crisp)
-      if (layer.strokeWidth > 0) {
-        ctx.save()
-        ctx.shadowBlur = 0
-        ctx.strokeStyle = layer.strokeColor
-        ctx.lineWidth = layer.strokeWidth * 2
-        ctx.lineJoin = 'round'
-        ctx.strokeText(text, cx, lineY)
-        ctx.restore()
-      }
-
-      // fill with optional glow
-      ctx.shadowBlur = layer.shadowBlur
-      ctx.shadowColor = layer.shadowColor
-      ctx.fillStyle = layer.color
-      ctx.fillText(text, cx, lineY)
-    }
-
-    ctx.restore()
-  }
-
-  function drawImageLayer(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    layer: PosterImageLayer,
-    imgEl: HTMLImageElement,
-  ) {
-    if (layer.opacity <= 0) return
-    const drawW = layer.size * width
-    const imgRatio = imgEl.naturalWidth / imgEl.naturalHeight
-    const drawH = drawW / imgRatio
-    const cx = layer.x * width
-    const cy = layer.y * height
-
-    ctx.save()
-    ctx.globalAlpha = layer.opacity
-
-    if (layer.rounded) {
-      const r = Math.min(drawW, drawH) / 2
-      ctx.beginPath()
-      ctx.arc(cx, cy, r, 0, Math.PI * 2)
-      ctx.clip()
-    }
-
-    ctx.drawImage(imgEl, cx - drawW / 2, cy - drawH / 2, drawW, drawH)
-    ctx.restore()
-  }
-
-  // ── Core render ────────────────────────────────────────────────────────────
-
   function renderPoster() {
-    const canvas = canvasRef.value
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const { width, height } = canvas
-    const cfg = config.value
-
-    // background
-    if (cfg.bgType === 'color' || !bgMedia.value) {
-      if (cfg.bgColor === cfg.bgColorEnd) {
-        ctx.fillStyle = cfg.bgColor
-        ctx.fillRect(0, 0, width, height)
-      } else {
-        const grad = ctx.createLinearGradient(0, 0, 0, height)
-        grad.addColorStop(0, cfg.bgColor)
-        grad.addColorStop(1, cfg.bgColorEnd)
-        ctx.fillStyle = grad
-        ctx.fillRect(0, 0, width, height)
-      }
-    } else {
-      ctx.save()
-      ctx.globalAlpha = 1
-      drawBgCover(ctx, width, height, bgMedia.value)
-      if (cfg.bgOverlayOpacity > 0) {
-        ctx.globalAlpha = cfg.bgOverlayOpacity
-        ctx.fillStyle = '#000'
-        ctx.fillRect(0, 0, width, height)
-      }
-      ctx.restore()
-    }
-
-    // logo
-    if (logoImage.value) {
-      drawImageLayer(ctx, width, height, cfg.logo, logoImage.value)
-    }
-
-    // text layers
-    drawTextLayer(ctx, width, height, cfg.title)
-    drawTextLayer(ctx, width, height, cfg.subtitle)
-  }
-
-  // ── Export ─────────────────────────────────────────────────────────────────
-
-  async function exportPNG(): Promise<Blob> {
-    renderPoster()
-    return new Promise((resolve, reject) => {
-      canvasRef.value?.toBlob(
-        (blob) => blob ? resolve(blob) : reject(new Error('导出失败')),
-        'image/png',
+    if (canvasRef.value)
+      bounds.value = renderPosterCanvas(
+        canvasRef.value,
+        config.value,
+        bgMedia.value,
+        logoImage.value,
       )
-    })
   }
-
-  async function exportJPEG(quality = 0.92): Promise<Blob> {
+  function renderTo(canvas: HTMLCanvasElement, value = config.value) {
+    return renderPosterCanvas(canvas, value, bgMedia.value, logoImage.value)
+  }
+  async function exportImage(format: 'png' | 'jpeg', quality = 0.92): Promise<Blob> {
+    if (!canvasRef.value) throw new Error('画布尚未就绪')
     renderPoster()
-    const canvas = canvasRef.value
-    if (!canvas) throw new Error('Canvas 不可用')
-    // JPEG has no alpha — composite onto white background
-    const tmp = document.createElement('canvas')
-    tmp.width = canvas.width
-    tmp.height = canvas.height
-    const tCtx = tmp.getContext('2d')!
-    tCtx.fillStyle = '#ffffff'
-    tCtx.fillRect(0, 0, tmp.width, tmp.height)
-    tCtx.drawImage(canvas, 0, 0)
-    return new Promise((resolve, reject) => {
-      tmp.toBlob(
-        (blob) => blob ? resolve(blob) : reject(new Error('导出失败')),
-        'image/jpeg',
+    return new Promise((resolve, reject) =>
+      canvasRef.value!.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('图片编码失败，请重试'))),
+        `image/${format}`,
         quality,
-      )
-    })
+      ),
+    )
   }
-
+  onBeforeUnmount(() => {
+    clearBgMedia()
+    clearLogo()
+  })
   return {
     bgMedia,
     logoImage,
+    bounds,
     loadLogoImage,
     clearLogo,
     loadBgMedia,
     clearBgMedia,
     seekBgVideoAsync,
     renderPoster,
-    exportPNG,
-    exportJPEG,
+    renderTo,
+    exportPNG: () => exportImage('png'),
+    exportJPEG: (quality = 0.92) => exportImage('jpeg', quality),
   }
 }

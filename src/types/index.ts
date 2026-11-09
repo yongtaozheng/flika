@@ -145,10 +145,17 @@ export interface IntroImageLayer {
 }
 
 /** 海报宽高比 */
-export type PosterRatio = '16:9' | '9:16' | '1:1' | '4:3'
+export type PosterRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4'
 
 /** 海报文字图层 */
 export interface PosterTextLayer {
+  fontFamily?: string
+  width?: number
+  maxHeight?: number
+  autoFit?: boolean
+  lineHeight?: number
+  highlight?: string
+  highlightColor?: string
   text: string
   fontSize: number
   fontWeight: string        // 'normal' | 'bold' | '100'-'900'
@@ -174,8 +181,21 @@ export interface PosterImageLayer {
   rounded: boolean          // circular clip
 }
 
+export type PosterComposition = 'panorama' | 'contact' | 'record' | 'sleeve' | 'archive' | 'collage' | 'type' | 'orbit'
+
 /** 海报/封面配置 */
 export interface PosterConfig {
+  composition?: PosterComposition
+  edition?: string
+  templateId?: string
+  layout?: 'cinematic' | 'album' | 'editorial' | 'bold'
+  accentColor?: string
+  eyebrow?: string
+  footer?: string
+  bgFit?: 'cover' | 'contain'
+  bgZoom?: number
+  bgPositionX?: number
+  bgPositionY?: number
   ratio: PosterRatio
   bgType: 'color' | 'image' | 'video'
   bgFile: File | null

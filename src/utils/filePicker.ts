@@ -68,8 +68,9 @@ export async function pickImageFiles(): Promise<File[]> {
  * - Tauri: 打开系统保存对话框，写入文件
  * - Web: 触发浏览器下载
  */
-export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg'): Promise<void> {
-  const filename = `flika-poster.${ext === 'jpeg' ? 'jpg' : 'png'}`
+export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg', name = 'flika-poster'): Promise<boolean> {
+  const safeName = name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').trim().slice(0, 100) || 'flika-poster'
+  const filename = `${safeName}.${ext === 'jpeg' ? 'jpg' : 'png'}`
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { writeFile } = await import('@tauri-apps/plugin-fs')
@@ -80,7 +81,7 @@ export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg'): Promise<vo
       filters: [{ name: '图片', extensions: [ext === 'jpeg' ? 'jpg' : 'png'] }],
     })
 
-    if (!path) return
+    if (!path) return false
 
     const buffer = await blob.arrayBuffer()
     await writeFile(path, new Uint8Array(buffer))
@@ -90,8 +91,9 @@ export async function saveImageFile(blob: Blob, ext: 'png' | 'jpeg'): Promise<vo
     a.href = url
     a.download = filename
     a.click()
-    URL.revokeObjectURL(url)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
+  return true
 }
 
 /**
