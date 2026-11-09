@@ -13,6 +13,10 @@ const router = createRouter({
       redirect: '/transition/diffusion',
       children: [
         {
+          path: ':removedEffect(beam|kaleidoscope|palette)',
+          redirect: '/transition/diffusion',
+        },
+        {
           path: 'diffusion',
           name: 'diffusion',
           component: () => import('../views/DiffusionPage.vue'),
@@ -43,29 +47,14 @@ const router = createRouter({
           component: () => import('../views/PixelWaterfallPage.vue'),
         },
         {
-          path: 'beam',
-          name: 'beam',
-          component: () => import('../views/RadialBeamPage.vue'),
-        },
-        {
           path: 'particle',
           name: 'particle',
           component: () => import('../views/ParticleReformPage.vue'),
         },
         {
-          path: 'kaleidoscope',
-          name: 'kaleidoscope',
-          component: () => import('../views/KaleidoscopePage.vue'),
-        },
-        {
           path: 'raindrop',
           name: 'raindrop',
           component: () => import('../views/RaindropErosionPage.vue'),
-        },
-        {
-          path: 'palette',
-          name: 'palette',
-          component: () => import('../views/PaletteRepaintPage.vue'),
         },
       ],
     },

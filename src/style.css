@@ -189,11 +189,8 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
     .ink-page,
     .fragment-page,
     .waterfall-page,
-    .beam-page,
     .particle-page,
-    .kaleidoscope-page,
     .raindrop-page,
-    .palette-page,
     .intro-page,
     .poster-page
   ) {
@@ -212,11 +209,8 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
     .ink-page,
     .fragment-page,
     .waterfall-page,
-    .beam-page,
     .particle-page,
-    .kaleidoscope-page,
     .raindrop-page,
-    .palette-page,
     .intro-page,
     .poster-page
   ) > .preview-col {
@@ -237,11 +231,8 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
     .ink-page,
     .fragment-page,
     .waterfall-page,
-    .beam-page,
     .particle-page,
-    .kaleidoscope-page,
     .raindrop-page,
-    .palette-page,
     .intro-page,
     .poster-page
   ) > .sidebar {
@@ -259,11 +250,8 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
     .ink-page,
     .fragment-page,
     .waterfall-page,
-    .beam-page,
     .particle-page,
-    .kaleidoscope-page,
     .raindrop-page,
-    .palette-page,
     .poster-page
   ) > .preview-col > .canvas-wrapper {
     flex: none;
@@ -277,11 +265,8 @@ button { font: inherit; cursor: pointer; border: none; background: none; color: 
     .ink-page,
     .fragment-page,
     .waterfall-page,
-    .beam-page,
     .particle-page,
-    .kaleidoscope-page,
     .raindrop-page,
-    .palette-page,
     .poster-page
   ) .canvas-shell:not(.is-fullscreen) {
     width: 100%;
