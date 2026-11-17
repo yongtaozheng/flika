@@ -53,11 +53,16 @@ export async function pickImageFiles(): Promise<File[]> {
 
   const paths = Array.isArray(selected) ? selected : [selected]
   const files: File[] = []
+  const mimeTypes: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+    gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+  }
 
   for (const p of paths) {
     const bytes = await readFile(p)
-    const name = p.split('/').pop() ?? p.split('\\').pop() ?? 'image'
-    files.push(new File([bytes], name))
+    const name = p.split(/[\\/]/).pop() || 'image'
+    const extension = name.split('.').pop()?.toLowerCase() || ''
+    files.push(new File([bytes], name, { type: mimeTypes[extension] || '' }))
   }
 
   return files

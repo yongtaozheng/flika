@@ -28,7 +28,7 @@ function handleDrop(e: DragEvent) {
   e.preventDefault()
   isDragging.value = false
   const files = e.dataTransfer?.files
-  if (files) processFiles(Array.from(files))
+  if (files?.length) processFiles(Array.from(files))
 }
 
 function handleFileInput(e: Event) {
@@ -55,8 +55,18 @@ async function triggerFileInput() {
 
 function removeImage(id: string) { emit('remove', id) }
 
-function onSortDragStart(index: number) { dragIndex.value = index }
-function onSortDragOver(e: DragEvent, index: number) { e.preventDefault(); dragOverIndex.value = index }
+function onSortDragStart(event: DragEvent, index: number) {
+  dragIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', props.images[index].id)
+  }
+}
+function onSortDragOver(e: DragEvent, index: number) {
+  if (dragIndex.value === null) return
+  e.preventDefault()
+  dragOverIndex.value = index
+}
 function onSortDrop(index: number) {
   if (dragIndex.value === null || dragIndex.value === index) return
   const imgs = [...props.images]
@@ -80,7 +90,7 @@ function onSortDragEnd() { dragIndex.value = null; dragOverIndex.value = null }
         class="img-tile"
         :class="{ sorting: dragIndex === index, over: dragOverIndex === index }"
         draggable="true"
-        @dragstart="onSortDragStart(index)"
+        @dragstart="onSortDragStart($event, index)"
         @dragover="(e) => onSortDragOver(e, index)"
         @drop.stop="onSortDrop(index)"
         @dragend="onSortDragEnd"
@@ -126,6 +136,7 @@ function onSortDragEnd() { dragIndex.value = null; dragOverIndex.value = null }
 </template>
 
 <style scoped>
+
 .hidden { display: none; }
 
 /* ── Grid ── */

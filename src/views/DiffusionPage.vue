@@ -2,6 +2,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import type { UploadedImage, DiffusionImage, DiffusionConfig } from '../types'
 import { useDiffusionEngine } from '../composables/useDiffusionEngine'
+import { getSegmentBeats, createAudioSegmentClock } from '../utils/diffusionRenderer'
 import { useAudioPlayer } from '../composables/useAudioPlayer'
 import { useBeatDetector } from '../composables/useBeatDetector'
 import { useOrientation } from '../composables/useOrientation'
@@ -20,6 +21,16 @@ const { orientation, CW, CH, canvasAspectRatio } = useOrientation()
 
 // ── Images ──────────────────────────────────────────────────────────────────
 const images = ref<DiffusionImage[]>([])
+const imagesLoading = ref(false)
+const imageError = ref('')
+const imagesReady = computed(() => images.value.length > 0 && !imagesLoading.value && !imageError.value)
+const canAnimate = computed(() => imagesReady.value && (config.mode !== 'transition' || images.value.length >= 2))
+const transitionCount = computed(() => config.mode === 'transition'
+  ? Math.max(0, images.value.length - (config.loop ? 0 : 1))
+  : images.value.length)
+const hasOutgoingTransition = computed(() => config.mode !== 'transition' || config.loop || selectedImageIndex.value < images.value.length - 1)
+let imageRevision = 0
+let disposed = false
 const uploaderImages = computed<UploadedImage[]>(() =>
   images.value.map(({ id, file, url, name }) => ({ id, file, url, name })),
 )
@@ -33,13 +44,37 @@ const { waveformData, extractWaveform } = useWaveform()
 const segmentStart = ref(0)
 const segmentEnd = ref(0)
 const segmentLoop = ref(false)
+const audioSegment = computed(() => ({
+  start: segmentStart.value,
+  end: segmentEnd.value > segmentStart.value ? segmentEnd.value : audioPlayer.duration.value,
+  loop: segmentLoop.value,
+}))
+const segmentBeats = computed(() => getSegmentBeats(beats.value, audioSegment.value.start, audioSegment.value.end))
+let beatClock: ReturnType<typeof createAudioSegmentClock> | null = null
 
 watch([segmentStart, segmentEnd], ([start, end]) => {
+  if (isPlaying.value) stop()
   audioPlayer.setSegment(start, end)
 })
 watch(segmentLoop, (loop) => {
+  if (isPlaying.value) stop()
   audioPlayer.setSegmentLoop(loop)
 })
+
+watch(audioPlayer.isPlaying, playing => {
+  if (!playing && isPlaying.value && segmentLoop.value && audioPlayer.audioElement.value?.ended) {
+    audioPlayer.seek(segmentStart.value)
+    void audioPlayer.play().catch(error => console.error('音频循环播放失败', error))
+  }
+})
+
+function handleAudioSeek(time: number) {
+  const target = isPlaying.value
+    ? Math.max(audioSegment.value.start, Math.min(audioSegment.value.end, time))
+    : time
+  audioPlayer.seek(target)
+  beatClock?.reset(target, performance.now())
+}
 
 function resetSegment() {
   segmentStart.value = 0
@@ -52,6 +87,7 @@ function formatTime(s: number): string {
 }
 
 async function handleAudioUpload(file: File) {
+  if (isPlaying.value) stop()
   audioFile.value = file
   audioPlayer.loadAudio(file)
 
@@ -84,6 +120,7 @@ watch(sensitivity, (val) => {
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const config = reactive<DiffusionConfig>({
+  mode: 'colorize',
   spreadDuration: 3000,
   pauseDuration: 1000,
   loop: false,
@@ -95,7 +132,7 @@ const config = reactive<DiffusionConfig>({
 const configRef = computed(() => ({ ...config }))
 
 // ── Engine ──────────────────────────────────────────────────────────────────
-const engine = useDiffusionEngine(canvasRef, images, configRef, beats)
+const engine = useDiffusionEngine(canvasRef, images, configRef, segmentBeats)
 
 // ── 切换画布方向 ─────────────────────────────────────────────────────────────
 watch(orientation, async () => {
@@ -107,9 +144,7 @@ watch(orientation, async () => {
     canvasRef.value.height = CH.value
   }
   if (images.value.length > 0) {
-    await engine.preloadImages()
-    engine.precomputeAll()
-    engine.renderStaticFrame(selectedImageIndex.value)
+    await refreshImages()
   } else {
     clearCanvas()
   }
@@ -129,6 +164,7 @@ const playElapsed = ref(0)
 
 let rafId: number | null = null
 let playStartMs = 0
+let playRevision = 0
 
 // ── Canvas helpers ──────────────────────────────────────────────────────────
 function clearCanvas() {
@@ -138,59 +174,83 @@ function clearCanvas() {
 
 watch(canvasBg, () => {
   if (isPlaying.value) return
-  if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
+  if (imagesReady.value) engine.renderStaticFrame(selectedImageIndex.value)
   else clearCanvas()
 })
 
+async function refreshImages() {
+  const revision = ++imageRevision
+  imagesLoading.value = true
+  imageError.value = ''
+  clearCanvas()
+  try {
+    await engine.preloadImages()
+    if (disposed || revision !== imageRevision) return
+    engine.precomputeAll()
+    if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
+  } catch (error) {
+    if (!disposed && revision === imageRevision) {
+      imageError.value = error instanceof Error ? error.message : '图片加载失败，请重试'
+    }
+  } finally {
+    if (!disposed && revision === imageRevision) imagesLoading.value = false
+  }
+}
+
+function switchMode(mode: 'colorize' | 'transition') {
+  if (isExporting.value || config.mode === mode) return
+  stop()
+  config.mode = mode
+  if (mode === 'transition') {
+    for (const image of images.value) {
+      if (image.points.length === 0) image.points = [{ id: uuidv4(), x: 0.5, y: 0.5 }]
+    }
+  }
+  selectedImageIndex.value = 0
+  editingMode.value = false
+  void refreshImages()
+}
+
 // ── Image management ────────────────────────────────────────────────────────
 function handleImagesAdd(newImgs: UploadedImage[]) {
+  if (isExporting.value) return
+  stop()
   const diffImgs: DiffusionImage[] = newImgs.map((img) => ({
     ...img,
-    points: [],
+    points: config.mode === 'transition' ? [{ id: uuidv4(), x: 0.5, y: 0.5 }] : [],
     spreadDuration: config.spreadDuration,
     pauseDuration: config.pauseDuration,
   }))
   images.value = [...images.value, ...diffImgs]
 
-  engine.preloadImages().then(() => {
-    engine.precomputeAll()
-    if (!isPlaying.value && images.value.length > 0) {
-      engine.renderStaticFrame(selectedImageIndex.value)
-    }
-  })
+  void refreshImages()
 }
 
 function handleImageRemove(id: string) {
+  if (isExporting.value) return
+  const selectedId = currentImage.value?.id
+  stop()
   const img = images.value.find((i) => i.id === id)
   if (img) URL.revokeObjectURL(img.url)
   images.value = images.value.filter((i) => i.id !== id)
-  if (selectedImageIndex.value >= images.value.length) {
-    selectedImageIndex.value = Math.max(0, images.value.length - 1)
-  }
-  if (images.value.length === 0) clearCanvas()
-  else if (!isPlaying.value) engine.renderStaticFrame(selectedImageIndex.value)
+  const selected = images.value.findIndex(image => image.id === selectedId)
+  selectedImageIndex.value = selected >= 0 ? selected : Math.max(0, Math.min(selectedImageIndex.value, images.value.length - 1))
+  void refreshImages()
 }
 
 function handleImagesReorder(reordered: UploadedImage[]) {
-  const extraMap = new Map(images.value.map((img) => [img.id, {
-    points: img.points,
-    spreadDuration: img.spreadDuration,
-    pauseDuration: img.pauseDuration,
-  }]))
-  images.value = reordered.map((img) => {
-    const extra = extraMap.get(img.id)
-    return {
-      ...img,
-      points: extra?.points ?? [],
-      spreadDuration: extra?.spreadDuration ?? config.spreadDuration,
-      pauseDuration: extra?.pauseDuration ?? config.pauseDuration,
-    }
-  })
+  if (isExporting.value) return
+  const selectedId = currentImage.value?.id
+  stop()
+  const existing = new Map(images.value.map(image => [image.id, image]))
+  images.value = reordered.map(image => existing.get(image.id)!)
+  selectedImageIndex.value = Math.max(0, images.value.findIndex(image => image.id === selectedId))
+  void refreshImages()
 }
 
 // ── Point editing ───────────────────────────────────────────────────────────
 function handleCanvasClick(e: MouseEvent) {
-  if (!editingMode.value || isPlaying.value) return
+  if (!editingMode.value || isPlaying.value || !hasOutgoingTransition.value) return
   if (images.value.length === 0) return
 
   const canvas = canvasRef.value
@@ -257,25 +317,39 @@ function pointMarkerStyle(pt: { x: number; y: number }) {
 // ── Image selection ─────────────────────────────────────────────────────────
 function selectImage(idx: number) {
   selectedImageIndex.value = idx
+  if (!hasOutgoingTransition.value) editingMode.value = false
   if (!isPlaying.value) engine.renderStaticFrame(idx)
 }
 
 // ── Playback ────────────────────────────────────────────────────────────────
-function play() {
-  if (images.value.length === 0) return
+async function play() {
+  if (!canAnimate.value || isExporting.value) return
+  const revision = ++playRevision
   isPlaying.value = true
   editingMode.value = false
 
-  const useBeatMode = engine.isBeatMode()
+  const useAudioClock = config.beatSyncEnabled && !!audioFile.value
 
-  if (useBeatMode) {
+  if (useAudioClock) {
     // Beat-sync: drive animation from audio time
     audioPlayer.seek(segmentStart.value)
-    audioPlayer.play()
+    try {
+      await audioPlayer.play()
+    } catch (error) {
+      if (revision !== playRevision) return
+      isPlaying.value = false
+      console.error('音频播放失败', error)
+      return
+    }
+    if (revision !== playRevision) return
+    if (!isPlaying.value) { audioPlayer.stop(); return }
+    beatClock = createAudioSegmentClock(audioSegment.value, performance.now())
 
     function beatLoop() {
       if (!isPlaying.value) return
-      const elapsed = audioPlayer.currentTime.value * 1000
+      const elapsed = beatClock!.sample(
+        audioPlayer.currentTime.value, audioPlayer.isPlaying.value, performance.now(),
+      )
       playElapsed.value = elapsed
       engine.renderFrame(elapsed)
 
@@ -283,7 +357,11 @@ function play() {
       if (!config.loop) {
         const total = engine.getTotalCycleDuration()
         if (elapsed >= total) {
-          stop()
+          if (config.mode === 'transition') {
+            isPlaying.value = false
+            audioPlayer.stop()
+            engine.renderFrame(total)
+          } else stop()
           return
         }
       }
@@ -314,44 +392,27 @@ function play() {
 }
 
 function stop() {
+  playRevision++
   isPlaying.value = false
   playElapsed.value = 0
+  beatClock = null
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
   audioPlayer.stop()
   engine.resetBallState()
-  if (images.value.length > 0) engine.renderStaticFrame(selectedImageIndex.value)
+  if (imagesReady.value) engine.renderStaticFrame(selectedImageIndex.value)
   else clearCanvas()
 }
 
 // ── Export ───────────────────────────────────────────────────────────────────
 async function handleExport() {
-  if (images.value.length === 0) return
+  if (!canAnimate.value || isExporting.value) return
   isExporting.value = true
   exportProgress.value = 0
 
   try {
-    const audioEl = engine.isBeatMode() ? audioPlayer.audioElement.value : null
+    const audioEl = config.beatSyncEnabled ? audioPlayer.audioElement.value : null
 
-    // "轮播1遍"的时长：
-    //   手动模式 → 所有图片 spreadDuration + pauseDuration 之和
-    //   踩点模式 → 保证所有图片都展示（不够的节拍用平均间隔外推）
-    const imgCount = images.value.length
-    const beatList = beats.value
-    let onePass: number
-    if (engine.isBeatMode() && beatList.length > 1) {
-      const beatSegments = beatList.length - 1
-      if (beatSegments >= imgCount) {
-        // 节拍段够用：前 N 段结束于 beats[N].time
-        onePass = beatList[imgCount].time * 1000
-      } else {
-        // 节拍段不够：用平均间隔外推，保证每张图片都有展示时间
-        const avgInterval = (beatList[beatList.length - 1].time - beatList[0].time) / beatSegments
-        const extraNeeded = imgCount - beatSegments
-        onePass = (beatList[beatList.length - 1].time + extraNeeded * avgInterval) * 1000
-      }
-    } else {
-      onePass = engine.getTotalCycleDuration()
-    }
+    const onePass = engine.getTotalCycleDuration(true)
 
     // 导出时长规则：
     // 1. 勾选循环 + 有歌曲 → 按歌曲时长
@@ -359,7 +420,7 @@ async function handleExport() {
     // 3. 未勾选循环       → 轮播 1 遍
     let exportDuration: number
     if (config.loop) {
-      const audioDurMs = audioPlayer.duration.value * 1000
+      const audioDurMs = Math.max(0, audioSegment.value.end - audioSegment.value.start) * 1000
       exportDuration = audioDurMs > 0 ? audioDurMs : onePass * 2
     } else {
       exportDuration = onePass
@@ -369,6 +430,7 @@ async function handleExport() {
       (p) => { exportProgress.value = p },
       audioEl,
       exportDuration,
+      audioSegment.value,
     )
     await saveVideoFile(blob)
   } catch (e: unknown) {
@@ -392,17 +454,23 @@ function handleCancelExport() {
 // ── Status ──────────────────────────────────────────────────────────────────
 const statusText = computed(() => {
   if (isExporting.value) return `导出中 ${Math.round(exportProgress.value * 100)}%`
+  if (imagesLoading.value) return '正在加载图片'
+  if (imageError.value) return imageError.value
+  if (config.mode === 'transition' && images.value.length === 1) return '过渡模式至少需要 2 张图片'
   if (images.value.length === 0) return '添加图片后开始'
   if (!isPlaying.value) {
     const totalPts = images.value.reduce((s, img) => s + img.points.length, 0)
-    const mode = config.beatSyncEnabled && beats.value.length >= 2 ? ' · 踩点模式' : ''
-    return `${images.value.length} 张图片 · ${totalPts} 个扩散点${mode}`
+    const mode = engine.isBeatMode() ? ' · 踩点模式' : ''
+    return config.mode === 'transition' ? `过渡模式 · ${images.value.length} 张图片 · ${transitionCount.value} 段过渡${mode}` : `${images.value.length} 张图片 · ${totalPts} 个扩散点${mode}`
   }
   const info = engine.getPlaybackInfo(playElapsed.value)
   const modeTag = engine.isBeatMode() ? ' 🎵' : ''
+  const label = config.mode === 'transition'
+    ? `图片 ${info.index + 1} → ${(info.index + 1) % images.value.length + 1}`
+    : `第 ${info.index + 1}/${images.value.length} 张`
   if (info.phase === 'spreading')
-    return `第 ${info.index + 1}/${images.value.length} 张 · 扩散中 ${Math.round(info.progress * 100)}%${modeTag}`
-  return `第 ${info.index + 1}/${images.value.length} 张 · 停留中${modeTag}`
+    return `${label} · 扩散中 ${Math.round(info.progress * 100)}%${modeTag}`
+  return `${label} · 停留中${modeTag}`
 })
 
 const statusPhase = computed(() => {
@@ -475,6 +543,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  disposed = true
+  imageRevision++
   stop()
   audioPlayer.cleanup()
   document.removeEventListener('fullscreenchange', onFullscreenChange)
@@ -509,13 +579,13 @@ onUnmounted(() => {
         </button>
 
         <!-- Empty state -->
-        <div v-if="images.length === 0" class="empty-state">
+        <div v-if="!imagesReady" class="empty-state">
           <svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.25">
             <circle cx="22" cy="22" r="4" />
             <circle cx="22" cy="22" r="11" />
             <circle cx="22" cy="22" r="19" />
           </svg>
-          <span>添加图片后预览扩散着色效果</span>
+          <span>{{ config.mode === 'transition' ? '添加至少 2 张图片，按顺序扩散过渡' : '添加图片后预览扩散着色效果' }}</span>
         </div>
 
         <!-- Point markers (editing mode) -->
@@ -566,13 +636,13 @@ onUnmounted(() => {
       </div>
 
       <!-- Audio uploader -->
-      <div class="sidebar-block">
+      <div class="sidebar-block" :inert="isExporting || undefined">
         <div class="block-header">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
           </svg>
           <span>音乐踩点</span>
-          <span v-if="beats.length" class="block-badge beat-badge">{{ beats.length }} 拍</span>
+          <span v-if="beats.length" class="block-badge beat-badge">{{ segmentBeats.length }} 拍</span>
         </div>
         <AudioUploader @upload="handleAudioUpload" />
 
@@ -590,7 +660,7 @@ onUnmounted(() => {
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
               BPM {{ bpm }}
             </span>
-            <span class="beat-chip">{{ beats.length }} 个节拍</span>
+            <span class="beat-chip">{{ segmentBeats.length }} 个节拍</span>
           </div>
 
           <!-- Sensitivity -->
@@ -609,12 +679,13 @@ onUnmounted(() => {
             <input type="checkbox" v-model="config.beatSyncEnabled" :disabled="beats.length === 0" />
             <span class="loop-label">踩点切换图片</span>
           </label>
+          <p v-if="config.beatSyncEnabled && segmentBeats.length < 2 && !isAnalyzing" class="transition-hint">选区内节拍不足，按图片时间设置播放</p>
         </template>
       </div>
 
       <!-- 片段选取 -->
       <Transition name="wf-fade">
-        <div class="sidebar-block segment-block" v-if="waveformData">
+        <div class="sidebar-block segment-block" v-if="waveformData" :inert="isExporting || undefined">
           <div class="block-header">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -632,7 +703,7 @@ onUnmounted(() => {
             :segment-end="segmentEnd"
             @update:segment-start="segmentStart = $event"
             @update:segment-end="segmentEnd = $event"
-            @seek="(t: number) => audioPlayer.seek(t)"
+            @seek="handleAudioSeek"
           />
           <div class="segment-controls">
             <label class="loop-toggle">
@@ -653,16 +724,25 @@ onUnmounted(() => {
           <span>图片素材</span>
           <span v-if="images.length" class="block-badge">{{ images.length }}</span>
         </div>
-        <ImageUploader
-          :images="uploaderImages"
-          @add="handleImagesAdd"
-          @remove="handleImageRemove"
-          @reorder="handleImagesReorder"
-        />
+        <fieldset class="diffusion-modes" :disabled="isExporting">
+          <legend>扩散模式</legend>
+          <div class="mode-options">
+            <button type="button" :aria-pressed="config.mode === 'colorize'" :class="{ active: config.mode === 'colorize' }" @click="switchMode('colorize')">着色模式</button>
+            <button type="button" :aria-pressed="config.mode === 'transition'" :class="{ active: config.mode === 'transition' }" @click="switchMode('transition')">过渡模式</button>
+          </div>
+        </fieldset>
+        <div :inert="isExporting || undefined">
+          <ImageUploader :images="uploaderImages" @add="handleImagesAdd"
+            @remove="handleImageRemove" @reorder="handleImagesReorder" />
+        </div>
+        <p v-if="config.mode === 'transition'" class="transition-hint">按顺序扩散过渡，可拖拽调整顺序。{{ config.loop ? '最后一张会过渡回第一张。' : '播放结束后停留在最后一张。' }}</p>
+        <p v-if="config.mode === 'transition' && images.length === 1" class="image-error" role="status">请至少上传 2 张图片</p>
+        <p v-if="imageError" class="image-error" role="alert">{{ imageError }}</p>
+        <p v-else-if="imagesLoading" class="image-loading" role="status">正在加载图片…</p>
       </div>
 
       <!-- Diffusion points editor -->
-      <div v-if="images.length > 0" class="sidebar-block">
+      <div v-if="images.length > 0" class="sidebar-block" :inert="isExporting || !imagesReady || undefined">
         <div class="block-header">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" opacity="0.3" /><circle cx="12" cy="12" r="6" opacity="0.5" /><circle cx="12" cy="12" r="2" />
@@ -680,14 +760,15 @@ onUnmounted(() => {
             :class="{ active: selectedImageIndex === idx }"
             @click="selectImage(idx)"
           >
-            <img :src="img.url" class="tab-thumb" />
+            <img :src="img.url" class="tab-thumb" :alt="img.name" />
             <span class="tab-idx">{{ idx + 1 }}</span>
             <span class="tab-pts">{{ img.points.length }}点 · {{ (img.spreadDuration / 1000).toFixed(1) }}s</span>
           </button>
         </div>
 
+        <p v-if="!hasOutgoingTransition" class="transition-hint">当前为结束画面，开启循环后可设置回到第一张的过渡。</p>
         <!-- Edit mode toggle + auto-add + clear -->
-        <div class="point-actions">
+        <div class="point-actions" :inert="!hasOutgoingTransition || undefined">
           <button
             class="edit-toggle"
             :class="{ active: editingMode }"
@@ -721,7 +802,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Point list -->
-        <div v-if="currentImagePoints.length > 0" class="point-list">
+        <div v-if="currentImagePoints.length > 0 && hasOutgoingTransition" class="point-list">
           <div v-for="(pt, idx) in currentImagePoints" :key="pt.id" class="point-item">
             <span class="point-num">{{ idx + 1 }}</span>
             <span class="point-coord">{{ (pt.x * 100).toFixed(0) }}%, {{ (pt.y * 100).toFixed(0) }}%</span>
@@ -734,9 +815,9 @@ onUnmounted(() => {
         </div>
 
         <!-- Per-image timing -->
-        <div v-if="currentImage" class="per-image-timing">
+        <div v-if="currentImage && hasOutgoingTransition" class="per-image-timing">
           <div class="timing-header">
-            <span class="timing-label">图片 {{ selectedImageIndex + 1 }} 时间设置</span>
+            <span class="timing-label">{{ config.mode === 'transition' ? `图片 ${selectedImageIndex + 1} → ${(selectedImageIndex + 1) % images.length + 1}` : `图片 ${selectedImageIndex + 1} 时间设置` }}</span>
             <button v-if="images.length > 1" class="apply-all-btn" @click="applyTimingToAll" title="将当前时间设置应用到所有图片">
               应用到全部
             </button>
@@ -785,12 +866,12 @@ onUnmounted(() => {
           <span>播放控制</span>
         </div>
         <div class="playback-btns">
-          <button class="btn-play" :disabled="images.length === 0 || isExporting" @click="isPlaying ? stop() : play()">
+          <button class="btn-play" :disabled="!canAnimate || isExporting" @click="isPlaying ? stop() : play()">
             <svg v-if="!isPlaying" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
             <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
             {{ isPlaying ? '停止' : '播放预览' }}
           </button>
-          <button v-if="!isExporting" class="btn-export" :disabled="images.length === 0 || isPlaying" @click="handleExport">
+          <button v-if="!isExporting" class="btn-export" :disabled="!canAnimate || isPlaying" @click="handleExport">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
             </svg>
@@ -846,6 +927,16 @@ onUnmounted(() => {
 
 <style scoped>
 /* ── Page layout ── */
+.diffusion-modes { border: 0; margin-bottom: 16px; min-width: 0; }
+.diffusion-modes legend { font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.mode-options { display: flex; gap: 6px; }
+.mode-options button { flex: 1; padding: 9px 8px; border-radius: var(--r-sm); border: 1px solid var(--border); color: var(--text-2); background: var(--surface-2); font-size: 12px; }
+.mode-options button.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+.mode-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mode-options button:disabled { opacity: 0.5; cursor: not-allowed; }
+.transition-hint { color: var(--text-2); font-size: 11px; margin-top: 10px; line-height: 1.6; }
+.image-error { color: var(--amber); font-size: 12px; margin-top: 10px; }
+.image-loading { color: var(--text-2); font-size: 12px; margin-top: 10px; }
 .diffusion-page {
   height: 100%;
   display: grid;

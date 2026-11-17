@@ -41,6 +41,7 @@ interface InitMessage {
   width: number
   height: number
   totalFrames: number
+  totalDurationMs?: number
   frameDurationMs: number
   step: number
 }
@@ -65,6 +66,8 @@ type WorkerInMessage = InitMessage | RenderBatchMessage | AckMessage | CancelMes
 
 let renderCtx: RenderContext | null = null
 let frameDurationMs = 1000 / 30
+let totalFrames = 0
+let totalDurationMs = 0
 let step = 1
 let cancelled = false
 let pendingFrames = 0
@@ -117,6 +120,8 @@ function handleInit(msg: InitMessage) {
     height: msg.height,
   }
   frameDurationMs = msg.frameDurationMs
+  totalFrames = msg.totalFrames
+  totalDurationMs = msg.totalDurationMs ?? totalFrames * frameDurationMs
   step = msg.step
 
   self.postMessage({ type: 'ready' })
@@ -146,7 +151,8 @@ async function handleRenderBatch(startFrame: number, endFrame: number) {
       await sleep(5)
     }
 
-    const timeMs = i * frameDurationMs
+    const isFinalFrame = i === totalFrames - 1 && renderCtx.config.mode === 'transition' && !renderCtx.config.loop
+    const timeMs = isFinalFrame ? totalDurationMs : i * frameDurationMs
     const result = renderFramePure(renderCtx, timeMs, step)
 
     // Transfer buffer 零拷贝传回主线程

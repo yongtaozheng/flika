@@ -320,6 +320,7 @@ export function createWorkerExport(options: ExportOptions): WorkerExportHandle {
           width,
           height,
           totalFrames,
+          totalDurationMs,
           frameDurationMs: FRAME_MS,
           step,
         },

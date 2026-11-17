@@ -438,6 +438,7 @@ export interface RaindropErosionConfig {
 
 /** 扩散着色 — 动画配置 */
 export interface DiffusionConfig {
+  mode?: 'colorize' | 'transition'
   /** 扩散完成时长 (ms) */
   spreadDuration: number
   /** 图片间停留时间 (ms) */

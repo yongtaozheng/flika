@@ -10,6 +10,7 @@
 export interface PrecomputedImageData {
   id: string
   originalData: Uint8ClampedArray
+  /** 初始像素，黑白模式为灰度图，过渡模式为当前图片 */
   grayscaleData: Uint8ClampedArray
   distanceField: Float32Array
   cosAngle: Float32Array
@@ -24,6 +25,7 @@ export interface PrecomputedImageData {
 }
 
 export interface DiffusionConfigPure {
+  mode?: 'colorize' | 'transition'
   spreadDuration: number
   pauseDuration: number
   loop: boolean
@@ -36,6 +38,43 @@ export interface DiffusionConfigPure {
 export interface BeatPure {
   time: number
   strength: number
+}
+
+export interface AudioSegment {
+  start: number
+  end: number
+  loop: boolean
+}
+
+export function getSegmentBeats(beats: BeatPure[], start: number, end: number): BeatPure[] {
+  return beats.filter(beat => beat.time >= start && beat.time <= end)
+    .map(beat => ({ ...beat, time: beat.time - start }))
+}
+
+/** Track continuous segment-relative time across audio wraps and the end of playback. */
+export function createAudioSegmentClock(segment: AudioSegment, startedAt: number) {
+  const duration = Math.max(0, segment.end - segment.start) * 1000
+  let completed = 0
+  let previousAudioTime = segment.start
+  let previousNow = startedAt
+  let elapsed = 0
+  return {
+    sample(audioTime: number, playing: boolean, now: number): number {
+      if (segment.loop && audioTime < previousAudioTime - 0.05) completed += duration
+      if (playing) {
+        elapsed = completed + Math.max(0, audioTime - segment.start) * 1000
+      } else elapsed += Math.max(0, now - previousNow)
+      previousAudioTime = audioTime
+      previousNow = now
+      return elapsed
+    },
+    reset(audioTime: number, now: number): void {
+      completed = 0
+      elapsed = Math.max(0, audioTime - segment.start) * 1000
+      previousAudioTime = audioTime
+      previousNow = now
+    },
+  }
 }
 
 export interface ResolvedSlot {
@@ -62,6 +101,27 @@ export const WAVE_ZONE = WAVE_WIDTH * WAVE_COUNT
 export function smoothstep(t: number): number {
   const x = Math.max(0, Math.min(1, t))
   return x * x * (3 - 2 * x)
+}
+
+/** Write a straight-alpha pixel after blending its premultiplied color channels. */
+export function blendRgba(
+  before: Uint8ClampedArray,
+  after: Uint8ClampedArray,
+  index: number,
+  progress: number,
+  output: Uint8ClampedArray,
+): void {
+  const beforeWeight = before[index + 3] * (1 - progress)
+  const afterWeight = after[index + 3] * progress
+  const alpha = beforeWeight + afterWeight
+  if (alpha === 0) {
+    output.fill(0)
+    return
+  }
+  for (let channel = 0; channel < 3; channel++) {
+    output[channel] = (before[index + channel] * beforeWeight + after[index + channel] * afterWeight) / alpha
+  }
+  output[3] = alpha
 }
 
 /* ── Grayscale conversion (luminance) ────────────────────────────────── */
@@ -158,23 +218,29 @@ function avgBeatInterval(beats: BeatPure[]): number {
 
 /* ── Time resolution: beat-sync mode ─────────────────────────────────── */
 /**
- * 一轮完整展示所有图片的时长。
+ * 一轮完整展示所有图片的时长，onePass 为 true 时只使用所需的节拍段。
  * 如果节拍段数 >= 图片数，直接用节拍覆盖；
  * 否则用平均节拍间隔外推不足的部分，保证每张图片都有展示时间。
  */
-export function getBeatTotalDuration(images: PrecomputedImageData[], beats: BeatPure[]): number {
+export function getBeatTotalDuration(
+  images: PrecomputedImageData[],
+  beats: BeatPure[],
+  onePass = false,
+  alignCycles = false,
+): number {
+  if (images.length === 0) return 0
   if (beats.length < 2) return getManualTotalDuration(images)
 
   const beatSegments = beats.length - 1
   const imgCount = images.length
+  let segmentCount = Math.max(beatSegments, imgCount)
+  if (onePass) segmentCount = imgCount
+  else if (alignCycles) segmentCount = Math.ceil(segmentCount / imgCount) * imgCount
 
-  if (beatSegments >= imgCount) {
-    // 节拍段够用，总时长 = 最后一个节拍时间
-    return beats[beats.length - 1].time * 1000
-  }
+  if (segmentCount <= beatSegments) return beats[segmentCount].time * 1000
 
-  // 节拍段不够：用平均间隔外推
-  const extraNeeded = imgCount - beatSegments
+  // Keep all detected beats, then extrapolate enough beats to complete the image cycle.
+  const extraNeeded = segmentCount - beatSegments
   return (beats[beats.length - 1].time + extraNeeded * avgBeatInterval(beats)) * 1000
 }
 
@@ -197,7 +263,7 @@ export function resolveBeatSync(
     if (effectiveTimeSec < segEnd) {
       const imageIndex = i % imgCount
       const segDurationMs = (segEnd - segStart) * 1000
-      const imageTimeMs = (effectiveTimeSec - segStart) * 1000
+      const imageTimeMs = Math.max(0, (effectiveTimeSec - segStart) * 1000)
       return {
         imageIndex,
         imageTime: imageTimeMs,
@@ -239,9 +305,14 @@ export function isBeatMode(config: DiffusionConfigPure, beats: BeatPure[]): bool
   return config.beatSyncEnabled && beats.length >= 2
 }
 
-export function getTotalCycleDuration(ctx: RenderContext): number {
+export function getTotalCycleDuration(
+  ctx: Pick<RenderContext, 'images' | 'config' | 'beats'>,
+  onePass = false,
+): number {
+  const transition = ctx.config.mode === 'transition'
+  const limitToImages = onePass || (transition && !ctx.config.loop)
   return isBeatMode(ctx.config, ctx.beats)
-    ? getBeatTotalDuration(ctx.images, ctx.beats)
+    ? getBeatTotalDuration(ctx.images, ctx.beats, limitToImages, transition && ctx.config.loop)
     : getManualTotalDuration(ctx.images)
 }
 
@@ -281,6 +352,7 @@ export function renderFramePure(
   const { images, config: cfg, width, height } = ctx
   const totalPixels = width * height * 4
   const output = new Uint8ClampedArray(totalPixels)
+  const blendedPixel = new Uint8ClampedArray(4)
 
   if (images.length === 0) {
     // 全黑帧
@@ -289,6 +361,14 @@ export function renderFramePure(
   }
 
   const totalCycle = getTotalCycleDuration(ctx)
+  if (cfg.mode === 'transition' && !cfg.loop && elapsedMs >= totalCycle) {
+    const imageIndex = images.length - 1
+    const final = images[imageIndex]
+    return {
+      buffer: final.originalData.slice(), imageIndex,
+      currentRadius: final.maxDist, spreadProgress: 1, rippleActive: false, animFade: 0,
+    }
+  }
 
   let effectiveTime = elapsedMs
   if (cfg.loop) {
@@ -341,23 +421,27 @@ export function renderFramePure(
       srcY = Math.max(0, Math.min(height - 1, Math.round(srcY)))
       const srcPx = (srcY * width + srcX) * 4
 
-      // Color / grayscale blending
+      // Blend the initial image into the final image.
       let r: number, g: number, b: number
-      const a: number = originalData[srcPx + 3]
+      let a: number
 
-      if (dist <= currentRadius - edgeWidth) {
+      if (spreadProgress >= 1 || (spreadProgress > 0 && dist <= currentRadius - edgeWidth)) {
         r = originalData[srcPx]
         g = originalData[srcPx + 1]
         b = originalData[srcPx + 2]
-      } else if (dist <= currentRadius) {
+        a = originalData[srcPx + 3]
+      } else if (spreadProgress > 0 && dist <= currentRadius) {
         const t = smoothstep((currentRadius - dist) / edgeWidth)
-        r = grayscaleData[srcPx] + (originalData[srcPx] - grayscaleData[srcPx]) * t
-        g = grayscaleData[srcPx + 1] + (originalData[srcPx + 1] - grayscaleData[srcPx + 1]) * t
-        b = grayscaleData[srcPx + 2] + (originalData[srcPx + 2] - grayscaleData[srcPx + 2]) * t
+        blendRgba(grayscaleData, originalData, srcPx, t, blendedPixel)
+        r = blendedPixel[0]
+        g = blendedPixel[1]
+        b = blendedPixel[2]
+        a = blendedPixel[3]
       } else {
         r = grayscaleData[srcPx]
         g = grayscaleData[srcPx + 1]
         b = grayscaleData[srcPx + 2]
+        a = grayscaleData[srcPx + 3]
       }
 
       // Fill step × step block

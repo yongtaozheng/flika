@@ -2,10 +2,12 @@ import { type Ref, onUnmounted } from 'vue'
 import type { Beat, DiffusionImage, DiffusionConfig } from '../types'
 import {
   smoothstep,
+  blendRgba,
+  createAudioSegmentClock,
+  type AudioSegment,
   toGrayscale,
   computeDistanceField,
-  getManualTotalDuration as _getManualTotalDuration,
-  getBeatTotalDuration as _getBeatTotalDuration,
+  getTotalCycleDuration as _getTotalCycleDuration,
   resolveManual as _resolveManual,
   resolveBeatSync as _resolveBeatSync,
   WAVE_COUNT,
@@ -42,6 +44,7 @@ function drawCover(
   const sw = el.naturalWidth
   const sh = el.naturalHeight
   if (!sw || !sh) return
+  ctx.clearRect(0, 0, cw, ch)
   const scale = Math.max(cw / sw, ch / sh)
   const dw = sw * scale
   const dh = sh * scale
@@ -255,24 +258,27 @@ export function useDiffusionEngine(
   }
 
   /* ── Image element loading ─────────────────────────────────────── */
-  function loadImageElement(img: DiffusionImage): Promise<HTMLImageElement> {
+  function loadImageElement(img: Pick<DiffusionImage, 'id' | 'url'>): Promise<HTMLImageElement> {
     const existing = imageCache.get(img.id)
     if (existing && existing.complete && existing.naturalWidth > 0) {
       return Promise.resolve(existing)
     }
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const el = new Image()
       el.onload = () => {
         imageCache.set(img.id, el)
         resolve(el)
       }
-      el.onerror = () => resolve(el)
+      el.onerror = () => reject(new Error('图片加载失败，请替换该图片'))
       el.src = img.url
     })
   }
 
   async function preloadImages(): Promise<void> {
-    await Promise.all(imagesRef.value.map((img) => loadImageElement(img)))
+    const activeIds = new Set(imagesRef.value.map(image => image.id))
+    for (const id of imageCache.keys()) if (!activeIds.has(id)) imageCache.delete(id)
+    for (const id of precomputed.keys()) if (!activeIds.has(id)) precomputed.delete(id)
+    await Promise.all(imagesRef.value.map(loadImageElement))
   }
 
   /* ── Pre-compute for a single image ────────────────────────────── */
@@ -283,19 +289,29 @@ export function useDiffusionEngine(
     const CW = canvasRef.value?.width ?? 1280
     const CH = canvasRef.value?.height ?? 720
 
-    ensureOffscreen(CW, CH)
-    drawCover(offCtx!, el, CW, CH)
+    const transition = configRef.value.mode === 'transition'
+    const index = imagesRef.value.findIndex(item => item.id === image.id)
+    const target = transition ? imagesRef.value[(index + 1) % imagesRef.value.length] : image
+    const targetElement = target && imageCache.get(target.id)
+    if (!targetElement?.complete || !targetElement.naturalWidth) return
 
+    ensureOffscreen(CW, CH)
+    drawCover(offCtx!, targetElement, CW, CH)
     const originalData = offCtx!.getImageData(0, 0, CW, CH).data
-    const grayscaleData = toGrayscale(originalData)
+    let grayscaleData: Uint8ClampedArray
+    if (transition) {
+      drawCover(offCtx!, el, CW, CH)
+      grayscaleData = offCtx!.getImageData(0, 0, CW, CH).data
+    } else grayscaleData = toGrayscale(originalData)
 
     let distanceField: Float32Array
     let cosAngle: Float32Array
     let sinAngle: Float32Array
     let maxDist: number
 
-    if (image.points.length > 0) {
-      const result = computeDistanceField(CW, CH, image.points)
+    const points = image.points.length > 0 ? image.points : transition ? [{ x: 0.5, y: 0.5 }] : []
+    if (points.length > 0) {
+      const result = computeDistanceField(CW, CH, points)
       distanceField = result.field
       cosAngle = result.cosAngle
       sinAngle = result.sinAngle
@@ -350,7 +366,9 @@ export function useDiffusionEngine(
 
   /* ── Helpers: build internal image list for resolvers ───────────── */
   function buildImageList(): PrecomputedImageData[] {
-    return imagesRef.value.map((img) => {
+    const images = configRef.value.mode === 'transition' && !configRef.value.loop
+      ? imagesRef.value.slice(0, -1) : imagesRef.value
+    return images.map((img) => {
       const data = precomputed.get(img.id)
       return {
         id: img.id,
@@ -370,19 +388,11 @@ export function useDiffusionEngine(
   }
 
   /* ── Helpers: per-image timing (manual mode) ───────────────────── */
-  function getManualTotalDuration(): number {
-    return _getManualTotalDuration(buildImageList())
-  }
-
   function resolveManual(effectiveTime: number): ResolvedSlot {
     return _resolveManual(buildImageList(), effectiveTime)
   }
 
   /* ── Helpers: beat-sync mode ───────────────────────────────────── */
-  function getBeatTotalDuration(): number {
-    return _getBeatTotalDuration(buildImageList(), beatsRef.value)
-  }
-
   function resolveBeatSync(effectiveTimeMs: number): ResolvedSlot {
     return _resolveBeatSync(buildImageList(), beatsRef.value, effectiveTimeMs)
   }
@@ -392,8 +402,10 @@ export function useDiffusionEngine(
     return configRef.value.beatSyncEnabled && beatsRef.value.length >= 2
   }
 
-  function getTotalCycleDuration(): number {
-    return isBeatMode() ? getBeatTotalDuration() : getManualTotalDuration()
+  function getTotalCycleDuration(onePass = false): number {
+    return _getTotalCycleDuration({
+      images: buildImageList(), config: configRef.value, beats: beatsRef.value,
+    }, onePass)
   }
 
   function resolveImageAtTime(effectiveTime: number): ResolvedSlot {
@@ -417,6 +429,12 @@ export function useDiffusionEngine(
 
     const { width, height } = canvas
     const totalCycle = getTotalCycleDuration()
+    if (totalCycle <= 0) { renderStaticFrame(0); return }
+    if (cfg.mode === 'transition' && !cfg.loop && elapsedMs >= totalCycle) {
+      const final = precomputed.get(images[images.length - 2].id)
+      if (final) ctx.putImageData(new ImageData(new Uint8ClampedArray(final.originalData), width, height), 0, 0)
+      return
+    }
 
     let effectiveTime = elapsedMs
     if (cfg.loop) {
@@ -441,6 +459,7 @@ export function useDiffusionEngine(
 
     const output = ctx.createImageData(width, height)
     const outData = output.data
+    const blendedPixel = new Uint8ClampedArray(4)
     const { originalData, grayscaleData, distanceField, cosAngle, sinAngle } = data
     const rippleActive = cfg.rippleEnabled && spreadProgress > 0 && spreadProgress < 1
     const animFade = rippleActive ? Math.sin(spreadProgress * Math.PI) : 0
@@ -472,21 +491,25 @@ export function useDiffusionEngine(
         const srcPx = (srcY * width + srcX) * 4
 
         let r: number, g: number, b: number
-        const a: number = originalData[srcPx + 3]
+        let a: number
 
-        if (dist <= currentRadius - edgeWidth) {
+        if (spreadProgress >= 1 || (spreadProgress > 0 && dist <= currentRadius - edgeWidth)) {
           r = originalData[srcPx]
           g = originalData[srcPx + 1]
           b = originalData[srcPx + 2]
-        } else if (dist <= currentRadius) {
+          a = originalData[srcPx + 3]
+        } else if (spreadProgress > 0 && dist <= currentRadius) {
           const t = smoothstep((currentRadius - dist) / edgeWidth)
-          r = grayscaleData[srcPx] + (originalData[srcPx] - grayscaleData[srcPx]) * t
-          g = grayscaleData[srcPx + 1] + (originalData[srcPx + 1] - grayscaleData[srcPx + 1]) * t
-          b = grayscaleData[srcPx + 2] + (originalData[srcPx + 2] - grayscaleData[srcPx + 2]) * t
+          blendRgba(grayscaleData, originalData, srcPx, t, blendedPixel)
+          r = blendedPixel[0]
+          g = blendedPixel[1]
+          b = blendedPixel[2]
+          a = blendedPixel[3]
         } else {
           r = grayscaleData[srcPx]
           g = grayscaleData[srcPx + 1]
           b = grayscaleData[srcPx + 2]
+          a = grayscaleData[srcPx + 3]
         }
 
         for (let dy2 = 0; dy2 < step && y + dy2 < height; dy2++) {
@@ -574,6 +597,7 @@ export function useDiffusionEngine(
     if (images.length === 0) return { index: 0, phase: 'idle' as const, progress: 0 }
 
     const totalCycle = getTotalCycleDuration()
+    if (totalCycle <= 0) return { index: 0, phase: 'idle' as const, progress: 0 }
 
     const effectiveTime = cfg.loop ? elapsedMs % totalCycle : Math.min(elapsedMs, totalCycle - 1)
     const { imageIndex, imageTime, effectiveSpreadDuration } = resolveImageAtTime(effectiveTime)
@@ -600,6 +624,7 @@ export function useDiffusionEngine(
     onProgress?: (p: number) => void,
     audioElement?: HTMLAudioElement | null,
     exportDurationMs?: number,
+    audioSegment?: AudioSegment,
   ): Promise<Blob> {
     const canvas = canvasRef.value
     if (!canvas) throw new Error('Canvas not available')
@@ -608,10 +633,10 @@ export function useDiffusionEngine(
     precomputeAll()
 
     const totalDuration = exportDurationMs ?? getTotalCycleDuration()
-    const hasAudio = !!(audioElement && isBeatMode())
+    const hasAudio = !!audioElement
 
     if (hasAudio) {
-      return exportWithAudio(audioElement!, totalDuration, onProgress)
+      return exportWithAudio(audioElement!, totalDuration, onProgress, audioSegment)
     }
 
     // 无音频 → Worker 导出
@@ -644,6 +669,7 @@ export function useDiffusionEngine(
     audioElement: HTMLAudioElement,
     totalDuration: number,
     onProgress?: (p: number) => void,
+    audioSegment?: AudioSegment,
   ): Promise<Blob> {
     audioCancelled = false
 
@@ -663,6 +689,24 @@ export function useDiffusionEngine(
       exportAudio.load()
     })
 
+    const segment = {
+      start: Math.max(0, audioSegment?.start ?? 0),
+      end: Math.min(exportAudio.duration, audioSegment?.end || exportAudio.duration),
+      loop: audioSegment?.loop ?? false,
+    }
+    if (segment.start >= segment.end) throw new Error('音频选区无效，请重新选择')
+    if (segment.start > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const seeked = () => { exportAudio.removeEventListener('error', failed); resolve() }
+        const failed = () => { exportAudio.removeEventListener('seeked', seeked); reject(new Error('音频选区加载失败')) }
+        exportAudio.addEventListener('seeked', seeked, { once: true })
+        exportAudio.addEventListener('error', failed, { once: true })
+        exportAudio.currentTime = segment.start
+      })
+    }
+
+    resetBallState()
+    renderFrame(0, 1)
     const videoStream = canvas.captureStream(FPS)
     let combinedStream: MediaStream = videoStream
     let audioCtx: AudioContext | null = null
@@ -689,8 +733,8 @@ export function useDiffusionEngine(
     const chunks: Blob[] = []
     recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data) }
 
-    exportAudio.currentTime = 0
     await exportAudio.play().catch(() => {})
+    const clock = createAudioSegmentClock(segment, performance.now())
     recorder.start()
 
     const totalSec = totalDuration / 1000
@@ -709,9 +753,24 @@ export function useDiffusionEngine(
           recorder.stop()
           return
         }
-        const t = exportAudio.currentTime
+        if (exportAudio.currentTime >= segment.end) {
+          if (segment.loop) {
+            exportAudio.currentTime = segment.start
+            void exportAudio.play().catch(() => {})
+          } else exportAudio.pause()
+        }
+        const t = clock.sample(exportAudio.currentTime, !exportAudio.paused && !exportAudio.ended, performance.now()) / 1000
         if (t >= totalSec) {
-          recorder.stop()
+          if (configRef.value.mode === 'transition' && !configRef.value.loop) {
+            renderFrame(totalDuration, 1)
+            exportAudio.pause()
+            const track = videoStream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
+            track.requestFrame?.()
+            // Keep recording for one frame so captureStream can encode the completed image.
+            setTimeout(() => {
+              if (recorder.state !== 'inactive') recorder.stop()
+            }, 1000 / FPS)
+          } else recorder.stop()
           return
         }
         // 以音频当前时间驱动渲染 —— 帧和节拍完美同步（step=1 保持原图清晰度）
